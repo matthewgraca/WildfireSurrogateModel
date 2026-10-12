@@ -1,0 +1,46 @@
+# WildfireSimulator environment — direct dependencies only, no version pins.
+#
+# Derived from scanning every Python import under src/, scripts/, tests/ and
+# FireBehaviorModels/FireDataset/. Transitive deps (pandas, geos, proj, pyproj,
+# xarray, tbb, threadpoolctl, …) are resolved automatically by conda.
+#
+# NOTE: your existing environment.yml also carries packages that belong to the
+# separate farsite-docker/ `flammap` env (pyshp, herbie-data, cfgrib, eccodes,
+# timezonefinder, windninja) and packages not imported anywhere in this repo
+# (folium, rich, typer, python-dotenv, safetensors, torchvision, sympy,
+# scikit-learn, requests, xarray, …). They were dropped here.
+#
+# If you train with a CUDA build of torch (see README), keep the pip override:
+#   conda env create -f environment.clean.yml
+#   conda activate wildfire_env
+#   pip install -e .
+#   pip uninstall torch torchvision && pip install torch torchvision \
+#       --index-url https://download.pytorch.org/whl/cu126
+name: wildfire_env_20261012
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # Runtime
+  - python
+  - pip
+  - numpy
+  - pytorch
+  - scipy
+  - timm
+  - tqdm
+  - pyyaml
+  - rioxarray
+  - rasterio
+  - geopandas
+  - shapely
+  - matplotlib-base
+  - pillow
+  - tensorboard
+  - pyshp
+  - herbie-data
+  - cfgrib
+  - timezonefinder
+  - windninja
+  # Tests
+  - pytest

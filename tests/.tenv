@@ -1,0 +1,3 @@
+LANDSCAPE=tests/data/palisades.tif
+TRIALS=tests/data/Trials/
+IGNITIONS=tests/data/Ignitions/

@@ -1,0 +1,53 @@
+# Wildfire Simulator — Fine-tuning configuration (stage 2)
+#
+# Differences from config.yaml are the entire conceptual delta of fine-tuning:
+#   - a lower learning rate (warm-start from pretrained weights)
+#   - an init_checkpoint to load those weights from
+#   - additional terrain-aware scenes mixed with the original as an anchor
+#
+# Run with:
+#   python scripts/run.py --config config.finetune.yaml --output-dir runs/finetune
+
+# Time step size (fraction of max_t per step)
+dt: "1/8"
+
+# Maximum simulation time (normalized)
+max_t: 1.0
+
+# Lower LR for fine-tuning: the pretrained features are a good prior, so we
+# avoid large early updates that would wipe them.
+lr: 1.0e-4
+
+# Number of input channels (state channels + time channel). Kept at 14 for the
+# same-architecture terrain-aware fine-tune. Change here (and in the dataset
+# assembly) when introducing additional channels.
+in_channels: 14
+
+# Weights-only initialization from a prior training run. Path is resolved
+# relative to this config file's directory. Update to your best checkpoint.
+finetune:
+  init_checkpoint: /mnt/wildfire/surrogate-model/2026-08-21-fat-quantized/checkpoints/best-model-39-0.25.pt
+
+# Scheduled sampling parameters
+scheduled_sampling:
+  k: 0.1
+  t0: 30
+
+# Scene mix: original Palisades as an anti-forgetting anchor, plus the new
+# terrain-aware landscapes. Bias the effective mix toward the new data by
+# curating trial counts per scene as desired.
+scenes:
+  - landscape: /mnt/wildfire/surrogate-model/FlamMapData/landscapes/classic-palisades/palisades.tif
+    trials: /mnt/wildfire/surrogate-model/FlamMapData/landscapes/classic-palisades/Trials/
+    ignitions: /mnt/wildfire/surrogate-model/FlamMapData/landscapes/classic-palisades/Ignitions/
+    # Down-sample the old uniform-wind data to ~50% (3211 -> 1606) so it
+    # roughly balances the terrain-aware scenes (932 + 755 = 1687). Reproducible
+    # via seed; no files are deleted on disk. Adjust `limit` to sweep the mix.
+    limit: 1606
+    seed: 42
+  - landscape: /mnt/wildfire/surrogate-model/FlamMapData/landscapes/angeles/angeles.tif
+    trials: /mnt/wildfire/surrogate-model/FlamMapData/landscapes/angeles/Trials/
+    ignitions: /mnt/wildfire/surrogate-model/FlamMapData/landscapes/angeles/Ignitions/
+  - landscape: /mnt/wildfire/surrogate-model/FlamMapData/landscapes/palisades/palisades.tif
+    trials: /mnt/wildfire/surrogate-model/FlamMapData/landscapes/palisades/Trials/
+    ignitions: /mnt/wildfire/surrogate-model/FlamMapData/landscapes/palisades/Ignitions/

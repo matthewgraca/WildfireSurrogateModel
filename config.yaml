@@ -1,0 +1,54 @@
+# Wildfire Simulator Configuration
+
+# Time step size (fraction of max_t per step)
+# Examples: "1/48" gives 48 steps, "1/8" gives 8 steps
+dt: "1/8"
+
+# Maximum simulation time (normalized)
+max_t: 1.0
+
+# Segmentation loss: "dice" (DiceLoss) or "dml" (Distance Map Loss,
+# Caliva et al. MIDL 2019, arXiv:1908.03679 — boundary-weighted cross-entropy
+# that upweights errors at the fire front).
+loss: dice
+
+# Optimizer learning rate.
+lr: 5.0e-4
+
+# Number of training epochs.
+epochs: 200
+
+# Set to false to disable the early stopping callback (patience 20 on
+# val_loss); training then always runs the full ``epochs`` count.
+early_stopping: false
+
+# Scheduled sampling parameters
+# k: steepness of sigmoid transition
+# t0: epoch at which probability = 50%
+scheduled_sampling:
+  k: 0.1
+  t0: 40
+
+# Training scenes. Each scene is one landscape with its own trials and
+# ignitions. Relative paths are resolved against this config file's directory.
+# A single-scene list reproduces the original stage-1 behavior.
+#
+# Each scene also accepts two optional subsampling knobs:
+#   limit: keep at most this many trials (omitted = all; a value >= the
+#          trial count is a no-op)
+#   seed:  RNG seed for the subsample (default 42; same seed -> same subset)
+# Subsampling happens in memory and is reproducible; no files are deleted on
+# disk. Use it to balance scene sizes across a multi-scene run.
+scenes:
+  - landscape: /mnt/wildfire/surrogate-model/FlamMapData/landscapes/classic-palisades/palisades.tif
+    trials: /mnt/wildfire/surrogate-model/FlamMapData/landscapes/classic-palisades/Trials/
+    ignitions: /mnt/wildfire/surrogate-model/FlamMapData/landscapes/classic-palisades/Ignitions/
+    # Optional: down-sample this scene to e.g. 1000 trials
+    limit: 1600
+    seed: 42
+  - landscape: /mnt/wildfire/surrogate-model/FlamMapData/landscapes/angeles/angeles.tif
+    trials: /mnt/wildfire/surrogate-model/FlamMapData/landscapes/angeles/Trials/
+    ignitions: /mnt/wildfire/surrogate-model/FlamMapData/landscapes/angeles/Ignitions/
+  - landscape: /mnt/wildfire/surrogate-model/FlamMapData/landscapes/palisades/palisades.tif
+    trials: /mnt/wildfire/surrogate-model/FlamMapData/landscapes/palisades/Trials/
+    ignitions: /mnt/wildfire/surrogate-model/FlamMapData/landscapes/palisades/Ignitions/
