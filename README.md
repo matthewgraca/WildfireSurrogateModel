@@ -71,3 +71,36 @@ graph TD
 
 ## Run training
 Simply through `python run.py`.
+
+## Real-fire inference (infer_real.py)
+`scripts/infer_real.py` runs the trained surrogate end-to-end on a **real** CAL
+FIRE fire: it resolves the ignition point + reference perimeter (via the
+farsite-docker `calfire_ignition.py`), ingests and resamples a LANDFIRE
+landscape to fit the model's fixed 500×500 crop, drives HRRR→WindNinja
+time-varying winds per autoregressive step, and rolls the model forward to
+produce:
+- `run_dir/results/result.json` — IoU between the predicted final polygon and
+  the real reference perimeter (+ areas, cell size, crop span),
+- `run_dir/spread.gif` — spread over time over a basemap + the real perimeter +
+  the ignition marker,
+- `run_dir/arrival_map.png` — a single fire-arrival-time map (same overlay).
+
+The model checkpoint stores only weights; per-channel min/max are computed from
+the training dataset by `scripts/compute_norm_stats.py` into an `.npz` that
+`infer_real.py` reads as `model.norm_stats`.
+
+```bash
+# 1. generate per-channel norm stats from the training data the checkpoint used
+python scripts/compute_norm_stats.py \
+  --landscape <train landscape.tif> --trials <train Trials/> \
+  --ignitions <train Ignitions/> --out ./norm-stats.npz
+# 2. fill configs/infer.example.toml, then:
+python scripts/infer_real.py --config configs/infer.example.toml
+```
+
+Note: the pipeline deliberately drives **time-varying** wind (HRRR per hour),
+which is out-of-distribution vs. training (the model only ever saw one static
+wind field), so low IoU may reflect an unfair comparison — the goal is the
+comparison, surfaced in `result.json`. When the 500-cell crop cannot fit the
+fire at 30 m, the landscape is **resampled coarser** (logged via `resample.json`
+and printed prominently); this changes the fire's effective resolution.

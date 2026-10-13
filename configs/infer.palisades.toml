@@ -1,0 +1,72 @@
+# infer.palisades.toml - real-fire inference for the 2026-09-04-ss-fix model.
+#
+# The model was trained on the 3-scene MultiSceneDataset in config.yaml
+# (classic-palisades 1600 trials, angeles, palisades) with a shared
+# per-channel normalization; norm_stats below is the union across all three
+# scenes. dt/max_t match the training schedule (dt = 1/8, max_t = 1.0).
+#
+# Only [fire] (name / year / a disambiguator) and [simulation] start/end need
+# confirming for your run. start/end are optional: when omitted the driver
+# falls back to the fire's FRAP alarm/containment dates from fire.json.
+
+[fire]
+# CAL FIRE fire name (case-insensitive) and YEAR_. Pick a real fire in the
+# PALISADES/ANGELES training area for the closest match to the model's domain.
+name = "Palisades"
+year = 2025
+# Disambiguator: --index if the name+year matches multiple records, else
+# --inc (FRAP incident number), or --lat/--lon to skip the IRWIN ignition
+# lookup. Exactly one of index/inc/lat/lon should be set.
+index = 0
+# inc = "LDF 00000738"
+# lat = 34.05
+# lon = -118.55
+
+[model]
+checkpoint = "/mnt/wildfire/surrogate-model/2026-09-04-ss-fix/checkpoints/best-model-97-0.29.pt"
+# Per-channel min/max across ALL THREE training scenes (compute:
+# python scripts/compute_norm_stats.py --config config.yaml --out ./norm-stats.npz)
+norm_stats = "/mnt/wildfire/surrogate-model/2026-09-04-ss-fix/norm-stats.npz"
+# Auto-compute the crop cell size from the fire extent so the 500-cell crop
+# spans the fire (leave unset; the native LFPS landscape is 30 m, and the
+# driver prints a prominent RESAMPLING notice + writes resample.json when it
+# must coarsen). Set an explicit cell_size_m only if you know the fire fits.
+# cell_size_m = 30
+margin = 0.10
+
+[landscape]
+email = "mgraca@calstatela.edu"
+version = "2024"
+fuel_model = "fbfm40"
+
+[wind]
+windninja_command = "/home/mgraca/miniconda3/envs/wildfire_env_20261012/bin/WindNinja_cli"
+threads = 8
+# row_timezone = "America/Los_Angeles"   # auto-detect from the ignition
+[wind.windninja_options]
+initialization_method = "wxModelInitialization"
+wx_model_type = "PASTCAST-GCP-HRRR-CONUS-3-KM"
+vegetation = "grass"
+input_wind_height = 10.0
+units_input_wind_height = "ft"
+output_wind_height = 20.0
+units_output_wind_height = "ft"
+output_speed_units = "mph"
+diurnal_winds = "true"
+
+[simulation]
+# UTC burn window (whole-hour, optional trailing Z). Omit both to use the
+# fire's alarm/containment dates (driver falls back to fire.json).
+# start = "2025-01-07T12:00"
+# end   = "2025-01-10T12:00"
+foliar_moisture = 110.0
+# Match the training schedule (config.yaml used dt = 1/8, max_t = 1.0).
+dt = "1/8"
+max_t = 1.0
+
+[paths]
+tools_python = "/home/mgraca/miniconda3/envs/wildfire_env_20261012/bin/python"
+farsite_repo = "/home/mgraca/Workspace/surrogate-model/farsite-docker"
+# Output directory; leave unset to default to
+# <farsite_repo>/FireBehaviorModels/SampleData/<year>_<slug>.
+# run_dir = "/home/mgraca/Workspace/surrogate-model/out/palisades"

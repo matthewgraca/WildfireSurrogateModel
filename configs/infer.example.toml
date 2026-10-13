@@ -1,0 +1,86 @@
+# infer.example.toml - real-fire inference config for the WildfireSurrogateModel.
+#
+# Fill in the placeholders below, then:
+#   python scripts/infer_real.py --config configs/infer.example.toml
+#
+# The driver resolves a real CAL FIRE fire (ignition point + reference
+# perimeter), ingests a LANDFIRE landscape, drives HRRR->WindNinja per-hour
+# winds, autoregressively rolls the surrogate forward, and reports:
+#   run_dir/results/result.json   (IoU + areas)
+#   run_dir/spread.gif            (spread over time over the basemap)
+#   run_dir/arrival_map.png       (fire-arrival-time map)
+#   run_dir/rollout.npz           (per-step masks / FAT / times)
+
+[fire]
+# CAL FIRE fire name (matched case-insensitively) and YEAR_ filter.
+name = "Palisades"
+year = 2020
+# Exactly one disambiguator: --index (pick among same-name records),
+# --inc (FRAP incident number), or --lat/--lon (manual ignition).
+index = 0
+# inc = "LDF 00000738"
+# lat = 34.05
+# lon = -118.55
+
+[model]
+# Trained checkpoint (a .pt produced by ModelCheckpoint / run.py).
+checkpoint = "/mnt/wildfire/checkpoints/best-model.pt"
+# Per-channel min/max from the training data the checkpoint was trained on.
+# Produce with: python scripts/compute_norm_stats.py --landscape <train.tif> \
+#   --trials <Train/> --ignitions <Ignitions/> --out ./norm-stats.npz
+norm_stats = "/mnt/wildfire/norm-stats.npz"
+# Optional fixed cell size (m). Leave unset to auto-compute from the fire
+# extent so the 500-cell crop spans the fire.
+# cell_size_m = 30
+# Optional margin fraction added around the computed cell size. Default 0.10.
+margin = 0.10
+
+[landscape]
+# LFPS-required requester email (public API - not an auth token).
+email = "you@example.com"
+# LANDFIRE release year for fuels/canopy (terrain is static LF2020). Default 2024.
+version = "2024"
+# Band-4 fuel classification (fbfm40 default, or fbfm13). Default fbfm40.
+fuel_model = "fbfm40"
+
+[wind]
+# Native conda-forge WindNinja binary (avoids the repo's Windows wine exes).
+# Empty string writes the .cfg, prints the manual command, and stops resumably.
+windninja_command = "/home/mgraca/miniconda3/envs/wildfire_env_20261012/bin/WindNinja_cli"
+threads = 8
+# Fire-local IANA clock used for the wind grids' row timestamps. Leave unset to
+# auto-detect from the ignition via timezonefinder.
+# row_timezone = "America/Los_Angeles"
+[wind.windninja_options]
+initialization_method = "wxModelInitialization"
+wx_model_type = "PASTCAST-GCP-HRRR-CONUS-3-KM"
+vegetation = "grass"
+input_wind_height = 10.0
+units_input_wind_height = "ft"
+output_wind_height = 20.0
+units_output_wind_height = "ft"
+output_speed_units = "mph"
+diurnal_winds = "true"
+
+[simulation]
+# UTC bounds for the model window (whole-hour, optional trailing Z). Defaults to
+# the fire's alarm/containment dates when omitted.
+start = "2020-01-01T00:00"
+end = "2020-02-01T00:00"
+# Raw foliar-moisture scalar in the training units (~100-130).
+foliar_moisture = 110.0
+# Normalized time step (fraction of max_t). "1/48" -> 48 steps. Default 1/48.
+dt = "1/48"
+# Normalized maximum time (the model's max_t). Default 1.0.
+max_t = 1.0
+# Fire-local IANA clock (also usable here; mirrored to the WindNinja cfg).
+# row_timezone = "America/Los_Angeles"
+
+[paths]
+# python interpreter that has torch + the farsite tools (single conda env).
+tools_python = "/home/mgraca/miniconda3/envs/wildfire_env_20261012/bin/python"
+# farsite-docker repo root (tools/ is appended to sys.path).
+farsite_repo = "/home/mgraca/Workspace/surrogate-model/farsite-docker"
+# Output directory. Leave unset to default to
+# <farsite_repo>/FireBehaviorModels/SampleData/<year>_<slug>.
+# run_dir = "/home/mgraca/Workspace/surrogate-model/out/palisades"

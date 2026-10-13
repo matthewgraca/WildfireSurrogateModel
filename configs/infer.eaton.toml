@@ -1,0 +1,75 @@
+# infer.eaton.toml - real-fire inference for the Eaton (Jan 2025) fire.
+#
+# The window follows the observed fire as closely as the whole-hour-UTC
+# requirement allows, NOT the WRF-SFIRE run (which ended early at Jan 9 03:00
+# UTC and had an 8h11m atmosphere/fuel-conditioning lead the surrogate - and
+# reality - does not have):
+#   ignition   : 2025-01-07 6:17 pm PST = 2025-01-08 02:17 UTC
+#   completion : 2025-01-09 12:00 pm PST = 2025-01-09 20:00 UTC  (~95%+)
+#   burn window: 2025-01-08 02:00 UTC -> 2025-01-09 20:00 UTC  (42 h)
+#
+# start is rounded down 02:17 -> 02:00 (nearest whole hour; the driver requires
+# whole-hour UTC for the HRRR/WindNinja window). The surrogate seeds the fire at
+# the crop center at [simulation] start, i.e. it begins burning AT start (no
+# conditioning period), so start = the ignition hour.
+
+[fire]
+name = "Eaton"
+year = 2025
+# Disambiguate if CAL FIRE has multiple 2025 "Eaton" records: use --index, or
+# --inc with the FRAP incident number (e.g. "LAC ...").
+index = 0
+# inc = "LAC 0000XXXX"
+# lat = 34.1860422292
+# lon = -118.09357612511549
+
+[model]
+checkpoint = "/mnt/wildfire/surrogate-model/2026-09-04-ss-fix/checkpoints/best-model-97-0.29.pt"
+# Per-channel min/max across ALL THREE training scenes (compute:
+# python scripts/compute_norm_stats.py --config config.yaml --out ./norm-stats.npz)
+norm_stats = "/mnt/wildfire/surrogate-model/2026-09-04-ss-fix/norm-stats.npz"
+# Auto-compute the crop cell size from the fire extent so the 500-cell crop
+# spans the fire (leave unset; native LFPS is 30 m and the driver prints a
+# prominent RESAMPLING notice + writes resample.json when it must coarsen).
+# cell_size_m = 30
+margin = 0.10
+
+[landscape]
+email = "mgraca@calstatela.edu"
+version = "2024"
+fuel_model = "fbfm40"
+
+[wind]
+windninja_command = "/home/mgraca/miniconda3/envs/wildfire_env_20261012/bin/WindNinja_cli"
+threads = 8
+# row_timezone = "America/Los_Angeles"   # auto-detect from the ignition
+[wind.windninja_options]
+initialization_method = "wxModelInitialization"
+wx_model_type = "PASTCAST-GCP-HRRR-CONUS-3-KM"
+vegetation = "brush"
+input_wind_height = 10.0
+units_input_wind_height = "ft"
+output_wind_height = 20.0
+units_output_wind_height = "ft"
+output_speed_units = "mph"
+diurnal_winds = "true"
+
+[simulation]
+# Burn window (UTC): ignition hour -> observed ~95%+ completion.
+# (Jan 7 6:00 pm PST -> Jan 9 12:00 pm PST). No atmosphere/fuel-conditioning
+# lead, so start is the ignition hour, not the WRF-SFIRE 18:00 atmosphere start.
+start = "2025-01-08T02:00"
+end = "2025-01-09T20:00"
+# Fixed foliar-moisture scalar (training range ~[70,129]); the WRF-SFIRE run
+# used an evolving equilibrium dead-fuel moisture rather than a fixed scalar.
+foliar_moisture = 110.0
+# Match the training schedule (config.yaml used dt = 1/8, max_t = 1.0).
+dt = "1/8"
+max_t = 1.0
+
+[paths]
+tools_python = "/home/mgraca/miniconda3/envs/wildfire_env_20261012/bin/python"
+farsite_repo = "/home/mgraca/Workspace/surrogate-model/farsite-docker"
+# Output directory; leave unset to default to
+# <farsite_repo>/FireBehaviorModels/SampleData/<year>_<slug>.
+# run_dir = "/home/mgraca/Workspace/surrogate-model/out/eaton"
