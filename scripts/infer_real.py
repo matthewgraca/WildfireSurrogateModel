@@ -4,8 +4,11 @@
 Runs the surrogate on a real CAL FIRE fire using only the ignition point + a
 UTC time range + a user foliar moisture, then autoregressively predicts spread
 and validates against the real final perimeter. Inputs come from one TOML
-config; outputs are IoU (``results/result.json``), a spread GIF
-(``spread.gif``), and a fire-arrival-time map (``arrival_map.png``).
+config; all generated results land in ``<run_dir>/results/``: ``result.json``
+(IoU + areas), ``spread.gif``, ``arrival_map.png``, the raw arrays
+(``input_channels.npz``, ``arrival_map.npy``, ``rollout.npz``), the predicted
+perimeter (``simulated_perimeter.shp``), the resampling note
+(``resample.json``), and plain PNGs (``input_channels.png``, ``arrival_time.png``).
 
 The farsite-docker ``tools/`` provide the CAL FIRE ingestion, LANDFIRE
 landscape ingest, and HRRR->WindNinja wind grids; this driver wires them to the
@@ -302,7 +305,7 @@ def _perimeter_vertices(geom):
             yield x, y
 
 
-def compute_cell_m(cfg, fj, run_dir):
+def compute_cell_m(cfg, fj, run_dir, results_dir):
     from pyproj import Transformer
     to5070 = Transformer.from_crs(4326, _EPSG_5070, always_xy=True)
     ig = to5070.transform(float(fj["lon"]), float(fj["lat"]))
@@ -338,7 +341,8 @@ def compute_cell_m(cfg, fj, run_dir):
         "max_radius_m": float(max_radius),
         "source": source,
     }
-    (run_dir / "resample.json").write_text(json.dumps(payload, indent=2) + "\n")
+    results_dir.mkdir(parents=True, exist_ok=True)
+    (results_dir / "resample.json").write_text(json.dumps(payload, indent=2) + "\n")
     print(f"cell size: {cell_m:.1f} m ({source}); "
           f"crop span {crop_span_km:.1f} km")
     return cell_m, ig_x, ig_y, max_radius
@@ -709,7 +713,7 @@ def rollout(cfg, model, sample_norm, norm, wind_frames, transform, start, end,
 # step 7 - georeference the final mask
 # ---------------------------------------------------------------------------
 def georeference_mask(history, times, cy, cx, landscape_transform,
-                      landscape_crs, landscape_shape, run_dir):
+                      landscape_crs, landscape_shape, results_dir):
     from rasterio.features import shapes
     from shapely.geometry import shape
     import shapely
@@ -728,12 +732,13 @@ def georeference_mask(history, times, cy, cx, landscape_transform,
     union = shapely.union_all(polys)
     union = union.buffer(0) if not union.is_valid else union
     gdf = gpd.GeoDataFrame(geometry=[union], crs=landscape_crs)
-    out = run_dir / "simulated_perimeter.shp"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    out = results_dir / "simulated_perimeter.shp"
     gdf.to_file(out)
     # rollout npz
     masks = np.stack([h[0] for h in history])
     fats = np.stack([h[1] for h in history])
-    np.savez(run_dir / "rollout.npz", masks=masks, fats=fats,
+    np.savez(results_dir / "rollout.npz", masks=masks, fats=fats,
              times_norm=np.asarray(times, dtype=np.float64))
     return out, union
 
@@ -741,7 +746,7 @@ def georeference_mask(history, times, cy, cx, landscape_transform,
 # ---------------------------------------------------------------------------
 # step 8 - IoU metric
 # ---------------------------------------------------------------------------
-def compute_iou(run_dir, sim_path, ref_path):
+def compute_iou(sim_path, ref_path):
     sim = gpd.read_file(sim_path).to_crs(_EPSG_5070)
     ref = gpd.read_file(ref_path).to_crs(_EPSG_5070)
     a = sim.union_all().buffer(0)
@@ -797,7 +802,7 @@ def main(argv=None):
     fj = resolve_fire(cfg, run_dir)
 
     # ---- step 2: cell size ----
-    cell_m, ig_x, ig_y, max_radius = compute_cell_m(cfg, fj, run_dir)
+    cell_m, ig_x, ig_y, max_radius = compute_cell_m(cfg, fj, run_dir, results_dir)
 
     # ---- step 3: landscape ----
     bbox = _bbox_around(cfg, fj, cell_m, margin=float(cfg["model"].get("margin", 0.10)))
@@ -846,7 +851,7 @@ def main(argv=None):
         else float(sim.get("dt", 0.125)),
         max_val_fat=float(norm.max_val[1]),
     )
-    real_fire.save_input_channels(sample, run_dir)
+    real_fire.save_input_channels(sample, results_dir)
 
     # ---- model ----
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -866,15 +871,15 @@ def main(argv=None):
     history, times = rollout(cfg, model, sample_norm, norm, wind_frames,
                              transform, start, end, dt, max_t, device, cy, cx)
     print(f"rollout: {len(history)} steps")
-    real_fire.save_arrival_map(history[-1][1], run_dir)
+    real_fire.save_arrival_map(history[-1][1], results_dir)
 
     # ---- step 7: georeference ----
     sim_perim, sim_union = georeference_mask(history, times, cy, cx,
                                              land_transform, land_crs,
-                                             (H, W), run_dir)
+                                             (H, W), results_dir)
 
     # ---- step 8: IoU ----
-    metric = compute_iou(run_dir, sim_perim, run_dir / "reference_perimeter.shp")
+    metric = compute_iou(sim_perim, run_dir / "reference_perimeter.shp")
     print(f"IoU: {metric['iou']:.4f}")
 
     # ---- step 9: render ----
@@ -885,8 +890,8 @@ def main(argv=None):
         run_dir, history, times, crop_affine, land_crs,
         ref_geom, _EPSG_5070, (ig_x, ig_y), start, end,
         dt, max_t, float(norm.min_val[1]), float(norm.max_val[1]),
-        out_gif=str(run_dir / "spread.gif"),
-        out_png=str(run_dir / "arrival_map.png"),
+        out_gif=str(results_dir / "spread.gif"),
+        out_png=str(results_dir / "arrival_map.png"),
     )
 
     # ---- write result.json ----

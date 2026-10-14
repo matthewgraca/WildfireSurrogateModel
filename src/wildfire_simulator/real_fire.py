@@ -137,7 +137,7 @@ CHANNEL_NAMES = [
 ]
 
 
-def save_input_channels(sample, run_dir, npz_name="input_channels.npz",
+def save_input_channels(sample, out_dir, npz_name="input_channels.npz",
                         png_name="input_channels.png"):
     """Save the raw (13, 500, 500) input channels to an .npz and a plain PNG.
 
@@ -150,7 +150,7 @@ def save_input_channels(sample, run_dir, npz_name="input_channels.npz",
     from pathlib import Path
 
     sample = _np.asarray(sample, dtype=_np.float32)
-    out = Path(run_dir)
+    out = Path(out_dir)
     npz = out / npz_name
     data = {name: sample[i] for i, name in enumerate(CHANNEL_NAMES)}
     data["sample"] = sample
@@ -209,13 +209,13 @@ def save_input_channels(sample, run_dir, npz_name="input_channels.npz",
     return npz
 
 
-def save_arrival_map(fat, run_dir, npy_name="arrival_map.npy",
+def save_arrival_map(fat, out_dir, npy_name="arrival_map.npy",
                      png_name="arrival_time.png"):
     """Save the raw final fire-arrival-time map as .npy and a plain PNG."""
     import numpy as _np
     from pathlib import Path
 
-    out = Path(run_dir)
+    out = Path(out_dir)
     arr = _np.asarray(fat, dtype=_np.float32)
     np_npy = out / npy_name
     _np.save(np_npy, arr)
