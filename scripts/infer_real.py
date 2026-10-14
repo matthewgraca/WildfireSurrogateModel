@@ -124,6 +124,55 @@ def _cache_ok(marker_path, params, required_files, allow_orphan=False):
         return False
 
 
+def _windninja_orphan_ok(wind_root, params):
+    """Validate a no-marker (orphan) set of WindNinja pairs for reuse.
+
+    Accepts them only if the grid cell size matches the requested ``cell_m``
+    and every per-hour stamp falls within the simulation window. This lets a
+    prior WindNinja run that predates the cache markers be reused instead of
+    re-downloading PASTCAST and re-solving.
+    """
+    frames = scan_frames(wind_root)
+    if not frames:
+        return False
+    try:
+        vel, _ = next(iter(frames.values()))
+        meta, _ = read_asc(vel)
+        if abs(float(meta["cellsize"]) - params["cell_m"]) > 0.01:
+            return False
+    except Exception:
+        return False
+    try:
+        ls = datetime.fromisoformat(params["local_start"])
+        le = datetime.fromisoformat(params["local_end"])
+    except Exception:
+        return False
+    for stamp in frames:
+        y, mo, d, h = stamp
+        try:
+            local = datetime(y, mo, d, h)
+        except Exception:
+            return False
+        if not (ls <= local <= le):
+            return False
+    return True
+
+
+def _windninja_cached(wind_root, params):
+    """True if WindNinja output is reusable (skip the PASTCAST re-download and
+    the solver): either a marker matching ``params`` exists AND the pairs are
+    present, or (orphan) the pairs are present and validate for ``params``."""
+    if not Path(wind_root).is_dir() or not scan_frames(wind_root):
+        return False
+    marker = Path(wind_root) / "windninja.cache.json"
+    if not marker.is_file():
+        return _windninja_orphan_ok(wind_root, params)
+    try:
+        return json.loads(marker.read_text()) == params
+    except Exception:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # config
 # ---------------------------------------------------------------------------
@@ -425,16 +474,42 @@ def _preflight_crop(cy, cx, shape, half=_HALF):
 # ---------------------------------------------------------------------------
 # step 4 - time-varying wind via WindNinja
 # ---------------------------------------------------------------------------
+def _serializable_opts(opts):
+    """WindNinja options are scalars, but drop anything non-JSON-safe."""
+    return {k: v for k, v in opts.items()
+            if isinstance(v, (str, int, float, bool, type(None)))}
+
+
 def stage_windninja(cfg, run_dir, cell_m, dem_resampled, slug,
                     local_start, local_end, tz_name):
     wind = cfg["wind"]
     opts = dict(wind.get("windninja_options") or {})
+    wind_root = run_dir / "windroot"
+    wind_root.mkdir(parents=True, exist_ok=True)
+
+    # WindNinja cache: if per-hour pairs already exist for these exact inputs,
+    # reuse them (skip PASTCAST re-download and the solver).
+    params = {
+        "cell_m": float(cell_m),
+        "local_start": local_start.isoformat(),
+        "local_end": local_end.isoformat(),
+        "tz_name": tz_name,
+        "options": _serializable_opts(opts),
+        "dem_mtime": dem_resampled.stat().st_mtime if dem_resampled.exists() else None,
+    }
+    if _windninja_cached(wind_root, params):
+        # Orphan (no marker yet) -> write one so future runs are strict.
+        if not (wind_root / "windninja.cache.json").exists():
+            (wind_root / "windninja.cache.json").write_text(
+                json.dumps(params, indent=2) + "\n")
+        n = len(scan_frames(wind_root))
+        print(f"reusing cached WindNinja: {n} hour(s) under {wind_root.resolve()}")
+        return wind_root
+
     im = opts.get("initialization_method")
     if not isinstance(im, str) or not im:
         die("wind.windninja_options.initialization_method is required "
             "(e.g. initialization_method = \"wxModelInitialization\")")
-    wind_root = run_dir / "windroot"
-    wind_root.mkdir(parents=True, exist_ok=True)
 
     lines = [f"{k} = {_scalar(v)}" for k, v in opts.items()]
     lines += [
@@ -495,6 +570,8 @@ def stage_windninja(cfg, run_dir, cell_m, dem_resampled, slug,
             env[var] = str(data_dir)
     argv = shlex.split(command) + [str(cfg_path)]
     run_subprocess(argv, cwd=str(run_dir), env=env)
+    (wind_root / "windninja.cache.json").write_text(
+        json.dumps(params, indent=2) + "\n")
     return wind_root
 
 
