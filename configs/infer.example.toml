@@ -34,6 +34,12 @@ norm_stats = "/mnt/wildfire/norm-stats.npz"
 # cell_size_m = 30
 # Optional margin fraction added around the computed cell size. Default 0.10.
 margin = 0.10
+# Radius (cells) of the seeded ignition disc at the crop center, all with a
+# constant FAT = dt*max_val. The model was trained on fire states that have
+# already grown a small region by t=dt (smallest training seed ~16 cells), so a
+# radius > 0 keeps the ignition in-distribution and lets the fire grow
+# connected. 0 = single pixel. Default 10.
+ignition_seed_radius = 10
 
 [landscape]
 # LFPS-required requester email (public API - not an auth token).

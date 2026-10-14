@@ -56,6 +56,36 @@ def test_build_sample_shape_and_channel_order():
     assert sample[1, 250, 250] == np.float32(0.125 * 1439.8)
 
 
+def test_build_sample_seed_disc():
+    """A seeded disc (radius>0) has a constant-FAT region at the crop center."""
+    land = _landscape()
+    wu = np.full(land.shape[-2:], 5.0, dtype=np.float32)
+    wv = np.full(land.shape[-2:], -3.0, dtype=np.float32)
+    dt = 0.125
+    sample = build_sample(land, wu, wv, 350, 350, foliar_moisture=110.0,
+                          dt=dt, max_val_fat=1439.8, seed_radius=5)
+    disc = sample[0] > 0.5
+    assert disc.sum() > 1                       # not a single pixel
+    assert disc[250, 250]                       # centered on the ignition
+    # constant FAT across the whole disc = dt*max_val
+    assert np.allclose(sample[1][disc], dt * 1439.8)
+    assert sample[1][~disc].sum() == 0.0       # nothing outside the disc
+    # radius ~5 disc (integer lattice pts inside r=5)
+    yy, xx = np.mgrid[0:500, 0:500]
+    expected = ((yy - 250) ** 2 + (xx - 250) ** 2) <= 25
+    assert disc.sum() == expected.sum()
+
+
+def test_build_sample_seed_zero_is_single_pixel():
+    land = _landscape()
+    wu = np.full(land.shape[-2:], 5.0, dtype=np.float32)
+    wv = np.full(land.shape[-2:], -3.0, dtype=np.float32)
+    sample = build_sample(land, wu, wv, 350, 350, foliar_moisture=110.0,
+                          dt=0.125, max_val_fat=1439.8, seed_radius=0)
+    assert (sample[0] > 0.5).sum() == 1
+    assert sample[0, 250, 250] == 1.0
+
+
 def test_fire_burn_step_wind_injects_time_varying_wind():
     model = _Recorder(value=0.8)
     inputs = torch.zeros((1, 13, 500, 500))

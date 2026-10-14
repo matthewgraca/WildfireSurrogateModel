@@ -43,12 +43,17 @@ _HALF = 250
 
 
 def build_sample(resampled_landscape, wind_u, wind_v, cy, cx,
-                 foliar_moisture, dt=0.0, max_val_fat=1.0, half=_HALF):
+                 foliar_moisture, dt=0.0, max_val_fat=1.0, half=_HALF,
+                 seed_radius=0):
     """Build the raw ``(13, 500, 500)`` float32 input crop.
 
     Mirrors ``WildfireDataset._load_raw_channels`` exactly:
     ``[fire_mask, fire_arr, elev, slope, aspect, fuel, cc, ch, cbh, cbd,
     wind_u, wind_v, foliar_moisture]``.
+
+    The fire seed is a disc of radius ``seed_radius`` at the crop center
+    [250, 250], all with ``FAT = dt * max_val_fat`` (constant). A radius of 0
+    gives the original single-pixel seed.
 
     Parameters
     ----------
@@ -67,6 +72,11 @@ def build_sample(resampled_landscape, wind_u, wind_v, cy, cx,
         the normalized seed arrival equals ``dt``.
     max_val_fat : float
         ``norm_stats`` max for channel 1 (arrival time).
+    seed_radius : int
+        Radius (in cells) of the seeded ignition disc. The model was trained
+        on fire states that have already grown a small region by ``t=dt`` (the
+        smallest training seed is ~16 cells), so a radius > 0 keeps the seed
+        in-distribution and lets the model grow a connected fire.
     """
     resampled_landscape = np.asarray(resampled_landscape, dtype=np.float32)
     if resampled_landscape.ndim != 3 or resampled_landscape.shape[0] != 8:
@@ -84,9 +94,16 @@ def build_sample(resampled_landscape, wind_u, wind_v, cy, cx,
     ]
 
     fire_mask = np.zeros((_CROP, _CROP), dtype=np.float32)
-    fire_mask[250, 250] = 1.0
     fire_arr = np.zeros((_CROP, _CROP), dtype=np.float32)
-    fire_arr[250, 250] = dt * max_val_fat
+    seed_val = dt * max_val_fat
+    if seed_radius and seed_radius > 0:
+        yy, xx = np.ogrid[:_CROP, :_CROP]
+        disc = (yy - 250) ** 2 + (xx - 250) ** 2 <= float(seed_radius) ** 2
+        fire_mask[disc] = 1.0
+        fire_arr[disc] = seed_val
+    else:
+        fire_mask[250, 250] = 1.0
+        fire_arr[250, 250] = seed_val
 
     wu = np.asarray(wind_u[cy0:cy1, cx0:cx1], dtype=np.float32)
     wv = np.asarray(wind_v[cy0:cy1, cx0:cx1], dtype=np.float32)

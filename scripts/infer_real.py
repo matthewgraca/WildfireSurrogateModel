@@ -200,6 +200,7 @@ def load_config(path):
     model = cfg.setdefault("model", {})
     model.setdefault("cell_size_m", None)
     model.setdefault("margin", 0.10)
+    model.setdefault("ignition_seed_radius", 10)
 
     # simulation defaults
     sim = cfg.setdefault("simulation", {})
@@ -850,6 +851,7 @@ def main(argv=None):
         dt=_eval_fraction(sim["dt"]) if isinstance(sim.get("dt"), str)
         else float(sim.get("dt", 0.125)),
         max_val_fat=float(norm.max_val[1]),
+        seed_radius=int(cfg["model"].get("ignition_seed_radius", 10)),
     )
     real_fire.save_input_channels(sample, results_dir)
 

@@ -33,6 +33,10 @@ norm_stats = "/mnt/wildfire/surrogate-model/2026-09-04-ss-fix/norm-stats.npz"
 # must coarsen). Set an explicit cell_size_m only if you know the fire fits.
 # cell_size_m = 30
 margin = 0.10
+# Radius (cells) of the seeded ignition disc (constant FAT = dt*max_val).
+# Keeps the seed in-distribution (training seed at t=dt is a grown region,
+# smallest ~16 cells); 0 = single pixel. Default 10.
+ignition_seed_radius = 10
 
 [landscape]
 email = "mgraca@calstatela.edu"
