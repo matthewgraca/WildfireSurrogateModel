@@ -712,7 +712,7 @@ def georeference_mask(history, times, cy, cx, landscape_transform,
                       landscape_crs, landscape_shape, run_dir):
     from rasterio.features import shapes
     from shapely.geometry import shape
-    import shapely.ops
+    import shapely
     full = np.zeros(landscape_shape, dtype=np.bool_)
     cy0, cy1 = cy - _HALF, cy + _HALF
     cx0, cx1 = cx - _HALF, cx + _HALF
@@ -725,7 +725,7 @@ def georeference_mask(history, times, cy, cx, landscape_transform,
             polys.append(shape(geom))
     if not polys:
         die("simulated fire did not burn any cell (empty final mask)")
-    union = shapely.ops.unary_union(polys)
+    union = shapely.union_all(polys)
     union = union.buffer(0) if not union.is_valid else union
     gdf = gpd.GeoDataFrame(geometry=[union], crs=landscape_crs)
     out = run_dir / "simulated_perimeter.shp"
@@ -744,8 +744,8 @@ def georeference_mask(history, times, cy, cx, landscape_transform,
 def compute_iou(run_dir, sim_path, ref_path):
     sim = gpd.read_file(sim_path).to_crs(_EPSG_5070)
     ref = gpd.read_file(ref_path).to_crs(_EPSG_5070)
-    a = sim.unary_union.buffer(0)
-    b = ref.unary_union.buffer(0)
+    a = sim.union_all().buffer(0)
+    b = ref.union_all().buffer(0)
     iou = a.intersection(b).area / a.union(b).area
     return {
         "iou": float(iou),
@@ -880,7 +880,7 @@ def main(argv=None):
     # ---- step 9: render ----
     crop_affine = land_transform * rasterio.Affine.translation(cx - _HALF, cy - _HALF)
     ref_gdf = gpd.read_file(run_dir / "reference_perimeter.shp").to_crs(_EPSG_5070)
-    ref_geom = ref_gdf.unary_union.buffer(0)
+    ref_geom = ref_gdf.union_all().buffer(0)
     real_fire.render(
         run_dir, history, times, crop_affine, land_crs,
         ref_geom, _EPSG_5070, (ig_x, ig_y), start, end,
