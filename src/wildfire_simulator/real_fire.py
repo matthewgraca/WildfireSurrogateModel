@@ -419,7 +419,8 @@ def render(run_dir, history, times, crop_affine, landscape_crs,
            ref_geom, ref_crs, ignition_xy, start, end,
            dt, max_t, min_val_fat, max_val_fat,
            out_gif, out_png, providers=("imagery", "osm"),
-           max_zoom=16, max_tiles=64):
+           max_zoom=16, max_tiles=64, clean_mask=None,
+           out_gif_clean=None, out_png_clean=None):
     """Render the rollout to ``spread.gif`` + ``arrival_map.png``.
 
     history : list[ndarray (13,500,500) raw] - per-step rollout states; step i
@@ -432,6 +433,12 @@ def render(run_dir, history, times, crop_affine, landscape_crs,
     start, end : python ``datetime`` (UTC) bounding the real-time window.
     dt, max_t : normalized rollout parameters.
     min_val_fat, max_val_fat : norm_stats channel-1 min/max.
+    clean_mask : ndarray (500,500) bool or None
+        When given (from the largest-component perimeter selection), also write
+        ``out_gif_clean`` / ``out_png_clean`` showing only the cells in this
+        mask, so the artifact blobs (excluded from the perimeter) are hidden in
+        the presentable visuals. The raw versions still show the full model
+        prediction.
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -483,65 +490,83 @@ def render(run_dir, history, times, crop_affine, landscape_crs,
     if len(times) != len(history):
         raise ValueError("render: times and history lengths differ")
     total = (end - start).total_seconds()
+    ticks = [0.0, 0.25, 0.5, 0.75, 1.0]
 
-    frames = []
-    for i, state in enumerate(history):
-        mask = np.asarray(state[0], dtype=np.float32)
-        extent_norm = times[i] + dt
-        real_t = start + timedelta_frac((extent_norm / max_t) * total)
+    def _frame_png(mask, caption, title):
+        """Render one spread frame; return a PIL RGB image."""
         fig, ax = plt.subplots(figsize=(8.0, 8.0))
-        # draw burned mask overlay
         burned = _reproject_3857(mask, crop_affine, landscape_crs,
                                  dst_transform, dst_shape)
         ax.imshow(_mask_rgba(burned, (0, 255, 255), 0.5),
                   extent=crop_extent, interpolation="nearest", zorder=2)
         _figure_frame(ax, basemap, ox, oy, ref_3857, ign_3857,
-                      caption=f"{real_t:%Y-%m-%d %H:%M} UTC",
-                      title=f"Spread step {i + 1}/{len(history)}",
-                      extent=extent)
+                      caption=caption, title=title, extent=extent)
         buf = BytesIO()
         fig.savefig(buf, format="png", dpi=100)
         plt.close(fig)
         buf.seek(0)
-        frames.append(Image.open(buf).convert("RGB"))
+        return Image.open(buf).convert("RGB")
+
+    def _arrival_png(mask, out_path, title):
+        """Render the final arrival-time map to ``out_path`` for the given mask."""
+        final = np.asarray(history[-1], dtype=np.float32)
+        fat = final[1].copy()
+        fat[mask <= 0.5] = np.nan
+        fat_norm = (fat - min_val_fat) / max(max_val_fat - min_val_fat, 1e-8)
+        fat_3857 = _reproject_3857(fat_norm, crop_affine, landscape_crs,
+                                   dst_transform, dst_shape)
+        fig, ax = plt.subplots(figsize=(8.0, 8.0))
+        cmap = plt.get_cmap("inferno")
+        mappable = ScalarMappable(norm=Normalize(vmin=0.0, vmax=1.0), cmap=cmap)
+        mappable.set_array([])
+        colored = (cmap(np.clip(fat_3857, 0.0, 1.0)) if np.isfinite(fat_3857).any()
+                   else np.zeros((*dst_shape, 4), dtype=np.uint8))
+        finite = np.isfinite(fat_3857)
+        colored = np.asarray(colored, dtype=np.float64)
+        colored[..., 3] = np.where(finite, colored[..., 3], 0.0)
+        ax.imshow(colored, extent=crop_extent, interpolation="nearest", zorder=2)
+        _figure_frame(ax, basemap, ox, oy, ref_3857, ign_3857,
+                      caption=f"final fire: {end:%Y-%m-%d %H:%M} UTC",
+                      title=title, extent=extent)
+        cbar = fig.colorbar(mappable, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_ticks(ticks)
+        cbar.set_ticklabels([
+            _fmt_real(start + timedelta_frac((v / max_t) * total)) for v in ticks
+        ])
+        cbar.set_label("fire arrival (UTC)")
+        fig.savefig(out_path, dpi=110, bbox_inches="tight")
+        plt.close(fig)
+        return out_path
+
+    # ---- GIF (raw + cleaned) ---------------------------------------------
+    frames = []
+    clean_frames = [] if (clean_mask is not None and out_gif_clean) else None
+    for i, state in enumerate(history):
+        mask = np.asarray(state[0], dtype=np.float32)
+        extent_norm = times[i] + dt
+        real_t = start + timedelta_frac((extent_norm / max_t) * total)
+        caption = f"{real_t:%Y-%m-%d %H:%M} UTC"
+        title = f"Spread step {i + 1}/{len(history)}"
+        frames.append(_frame_png(mask, caption, title))
+        if clean_frames is not None:
+            clean = ((mask > 0.5) & clean_mask).astype(np.float32)
+            clean_frames.append(_frame_png(clean, caption, title))
     if out_gif:
         frames[0].save(out_gif, save_all=True, append_images=frames[1:],
                        loop=0, duration=int(max(100, 1200 / len(frames))))
         print(f"  gif: {out_gif} ({len(frames)} frames)")
+    if clean_frames and out_gif_clean:
+        clean_frames[0].save(out_gif_clean, save_all=True,
+                             append_images=clean_frames[1:], loop=0,
+                             duration=int(max(100, 1200 / len(clean_frames))))
+        print(f"  gif (cleaned): {out_gif_clean} ({len(clean_frames)} frames)")
 
-    # ---- arrival map -------------------------------------------------------
+    # ---- arrival map (raw + cleaned) --------------------------------------
     final = np.asarray(history[-1], dtype=np.float32)
-    mask = final[0]
-    fat = final[1].copy()
-    fat[mask <= 0.5] = np.nan
-    fat_norm = (fat - min_val_fat) / max(max_val_fat - min_val_fat, 1e-8)
-    fat_3857 = _reproject_3857(fat_norm, crop_affine, landscape_crs,
-                               dst_transform, dst_shape)
-    fig, ax = plt.subplots(figsize=(8.0, 8.0))
-    cmap = plt.get_cmap("inferno")
-    mappable = ScalarMappable(norm=Normalize(vmin=0.0, vmax=1.0), cmap=cmap)
-    mappable.set_array([])
-    colored = (cmap(np.clip(fat_3857, 0.0, 1.0)) if np.isfinite(fat_3857).any()
-               else np.zeros((*dst_shape, 4), dtype=np.uint8))
-    # never-burned cells -> transparent (alpha channel, element-wise)
-    finite = np.isfinite(fat_3857)
-    colored = np.asarray(colored, dtype=np.float64)
-    colored[..., 3] = np.where(finite, colored[..., 3], 0.0)
-    ax.imshow(colored, extent=crop_extent, interpolation="nearest", zorder=2)
-    _figure_frame(ax, basemap, ox, oy, ref_3857, ign_3857,
-                  caption=f"final fire: {end:%Y-%m-%d %H:%M} UTC",
-                  title="Predicted fire arrival time",
-                  extent=extent)
-    cbar = fig.colorbar(mappable, ax=ax, fraction=0.046, pad=0.04)
-    ticks = [0.0, 0.25, 0.5, 0.75, 1.0]
-    cbar.set_ticks(ticks)
-    cbar.set_ticklabels([
-        _fmt_real(start + timedelta_frac((v / max_t) * total)) for v in ticks
-    ])
-    cbar.set_label("fire arrival (UTC)")
-    fig.savefig(out_png, dpi=110, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  arrival map: {out_png}")
+    _arrival_png(final[0], out_png, "Predicted fire arrival time")
+    if clean_mask is not None and out_png_clean:
+        _arrival_png((final[0] > 0.5) & clean_mask, out_png_clean,
+                     "Predicted fire arrival time (cleaned)")
 
 
 def timedelta_frac(seconds):

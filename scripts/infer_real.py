@@ -9,6 +9,9 @@ config; all generated results land in ``<run_dir>/results/``: ``result.json``
 (``input_channels.npz``, ``arrival_map.npy``, ``rollout.npz``), the predicted
 perimeter (``simulated_perimeter.shp``), the resampling note
 (``resample.json``), and plain PNGs (``input_channels.png``, ``arrival_time.png``).
+When ``model.perimeter_component = "largest"`` hides disconnected artifact
+blobs, ``spread_cleaned.gif`` and ``arrival_map_cleaned.png`` are also written
+(these mask out the artifact cells; the raw versions keep the full prediction).
 
 The farsite-docker ``tools/`` provide the CAL FIRE ingestion, LANDFIRE
 landscape ingest, and HRRR->WindNinja wind grids; this driver wires them to the
@@ -201,6 +204,7 @@ def load_config(path):
     model.setdefault("cell_size_m", None)
     model.setdefault("margin", 0.10)
     model.setdefault("ignition_seed_radius", 10)
+    model.setdefault("perimeter_component", "largest")
 
     # simulation defaults
     sim = cfg.setdefault("simulation", {})
@@ -714,7 +718,15 @@ def rollout(cfg, model, sample_norm, norm, wind_frames, transform, start, end,
 # step 7 - georeference the final mask
 # ---------------------------------------------------------------------------
 def georeference_mask(history, times, cy, cx, landscape_transform,
-                      landscape_crs, landscape_shape, results_dir):
+                      landscape_crs, landscape_shape, results_dir,
+                      component="largest"):
+    """Turn the final predicted mask into a vector perimeter polygon.
+
+    ``component`` controls which burned pixels become the perimeter:
+    ``"largest"`` keeps only the largest connected fire blob (dropping
+    disconnected artifact blobs from OOD/boundary predictions), ``"all"`` keeps
+    every burned pixel (raw). The rollout arrays are unaffected.
+    """
     from rasterio.features import shapes
     from shapely.geometry import shape
     import shapely
@@ -722,6 +734,18 @@ def georeference_mask(history, times, cy, cx, landscape_transform,
     cy0, cy1 = cy - _HALF, cy + _HALF
     cx0, cx1 = cx - _HALF, cx + _HALF
     mask = (history[-1][0] > 0.5)
+    if not mask.any():
+        die("simulated fire did not burn any cell (empty final mask)")
+    clean_mask = None
+    if component == "largest":
+        from scipy import ndimage
+        labeled, n = ndimage.label(mask)
+        if n > 1:
+            sizes = ndimage.sum(mask, labeled, index=range(1, n + 1))
+            largest = int(np.argmax(sizes)) + 1
+            keep = (labeled == largest)
+            mask = keep
+            clean_mask = keep          # 500x500 bool for the cleaned visuals
     full[cy0:cy1, cx0:cx1] = mask
     polys = []
     for geom, val in shapes(full.astype(np.uint8), mask=full,
@@ -741,7 +765,7 @@ def georeference_mask(history, times, cy, cx, landscape_transform,
     fats = np.stack([h[1] for h in history])
     np.savez(results_dir / "rollout.npz", masks=masks, fats=fats,
              times_norm=np.asarray(times, dtype=np.float64))
-    return out, union
+    return out, union, clean_mask
 
 
 # ---------------------------------------------------------------------------
@@ -876,9 +900,9 @@ def main(argv=None):
     real_fire.save_arrival_map(history[-1][1], results_dir)
 
     # ---- step 7: georeference ----
-    sim_perim, sim_union = georeference_mask(history, times, cy, cx,
-                                             land_transform, land_crs,
-                                             (H, W), results_dir)
+    sim_perim, sim_union, clean_mask = georeference_mask(
+        history, times, cy, cx, land_transform, land_crs, (H, W), results_dir,
+        component=cfg["model"].get("perimeter_component", "largest"))
 
     # ---- step 8: IoU ----
     metric = compute_iou(sim_perim, run_dir / "reference_perimeter.shp")
@@ -894,6 +918,9 @@ def main(argv=None):
         dt, max_t, float(norm.min_val[1]), float(norm.max_val[1]),
         out_gif=str(results_dir / "spread.gif"),
         out_png=str(results_dir / "arrival_map.png"),
+        clean_mask=clean_mask,
+        out_gif_clean=str(results_dir / "spread_cleaned.gif"),
+        out_png_clean=str(results_dir / "arrival_map_cleaned.png"),
     )
 
     # ---- write result.json ----

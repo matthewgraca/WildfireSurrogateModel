@@ -37,6 +37,13 @@ margin = 0.10
 # Keeps the seed in-distribution (training seed at t=dt is a grown region,
 # smallest ~16 cells); 0 = single pixel. Default 10.
 ignition_seed_radius = 10
+# Which burned cells become the simulated perimeter/ IoU comparison:
+#   "largest" -> keep only the largest connected fire blob (drop disconnected
+#               OOD/boundary artifact blobs). Default.
+#   "all"     -> keep every burned pixel (raw). Final-only; the autoregressive
+#                rollout is unchanged (rollout.npz / arrival_map.npy stay raw).
+perimeter_component = "largest"
+
 
 [landscape]
 email = "mgraca@calstatela.edu"

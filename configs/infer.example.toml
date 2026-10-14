@@ -40,6 +40,16 @@ margin = 0.10
 # radius > 0 keeps the ignition in-distribution and lets the fire grow
 # connected. 0 = single pixel. Default 10.
 ignition_seed_radius = 10
+# Which burned cells become the simulated perimeter/ IoU comparison:
+#   "largest" -> keep only the largest connected fire blob (drop disconnected
+#               OOD/boundary artifact blobs). Default.
+#   "all"     -> keep every burned pixel (raw).
+# This is final-only: it does NOT change the autoregressive rollout, so the
+# model's raw predictions (and any artifact propagation) are preserved in
+# rollout.npz / arrival_map.npy / spread.gif. When "largest" actually hides
+# artifact blobs, the cleaned visuals spread_cleaned.gif / arrival_map_cleaned.png
+# are also written (they mask out those cells); the raw GIF/arrival map remain.
+perimeter_component = "largest"
 
 [landscape]
 # LFPS-required requester email (public API - not an auth token).
