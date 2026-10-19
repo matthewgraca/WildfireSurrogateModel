@@ -68,9 +68,9 @@ diurnal_winds = "true"
 [simulation]
 # UTC burn window (whole-hour, optional trailing Z). Omit both to use the
 # fire's alarm/containment dates (driver falls back to fire.json).
-# start = "2025-01-07T12:00"
-# end   = "2025-01-10T12:00"
-foliar_moisture = 110.0
+start = "2025-01-07T17:00"
+end   = "2025-01-11T03:00"
+foliar_moisture = 80.0
 # Match the training schedule (config.yaml used dt = 1/8, max_t = 1.0).
 dt = "1/8"
 max_t = 1.0
