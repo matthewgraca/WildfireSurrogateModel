@@ -113,8 +113,19 @@ VIIRS). It reuses a completed `infer_real.py` run and matches its fire
 explicit `--fire-id`/`--inc`) to a real-data folder
 (`fires.csv` + `samples.csv` + `samples/<fire_id>.npz`). Each real-data step is
 aligned to the nearest model step by real time (favoring the model slightly
-ahead on ties) and scored by cell-wise IoU over the model's crop coverage. It
-writes, into `<run_dir>/results/real_compare/` (or `--out`):
+ahead on ties) and scored by cell-wise IoU over the model's crop coverage.
+
+Time is squared away: the surrogate window (`result.json` `start`/`end`) is UTC,
+and the real-data `t_input`/`t_label` are the fire's **local** wall-clock time
+(the dataset carries no timezone column). The adapter maps the fire's
+`centroid_lon` to a nominal IANA US zone (approximate longitude bands) and
+converts every real timestamp to UTC via `zoneinfo`, so the two timelines are
+compared in a single (UTC) frame. The chain is anchored at the first sample that
+actually holds fire (the observed perimeter above the small pre-fire
+placeholder), and its **first frame is the initial observed perimeter** (the
+small ignition fire) at that sample's `t_input`, with labels accumulated
+afterward — so the real data's initial fire is shown rather than a large merged
+first frame. It writes, into `<run_dir>/results/real_compare/` (or `--out`):
 
 - `metrics.json` — per-step aligned IoU, average step IoU, final footprint IoU,
 - `spread_compare.gif` — side-by-side real-vs-model spread per aligned step,

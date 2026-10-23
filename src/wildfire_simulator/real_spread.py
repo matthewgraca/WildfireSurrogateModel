@@ -37,6 +37,47 @@ _EPSG_5070 = "EPSG:5070"
 
 _EPS = 1e-9
 
+# The real-data t_input/t_label are the fire's *local* wall-clock time (the
+# dataset carries no timezone column), while the surrogate window and the
+# dataset's ignition_date are UTC. We map a fire's centroid longitude to a
+# nominal IANA US zone and convert local -> UTC via zoneinfo (handles DST).
+# Band edges are approximate for the irregular US timezone boundaries.
+_LON_TZ_BANDS = [
+    (-85.0, "America/New_York"),
+    (-102.5, "America/Chicago"),
+    (-110.0, "America/Denver"),
+    (-130.0, "America/Los_Angeles"),
+    (-150.0, "America/Anchorage"),
+]
+# Pre-fire samples carry a small constant placeholder perimeter (15 cells in
+# practice); real fire detections are far larger. This is the cutoff used to
+# anchor the chain at the first sample that actually holds fire.
+_ARTIFACT_THRESHOLD = 20
+
+
+def _lon_to_tz(lon) -> str:
+    """Nominal IANA US timezone for a centroid longitude (approximate bands)."""
+    for edge, zone in _LON_TZ_BANDS:
+        if lon >= edge:
+            return zone
+    return "Pacific/Honolulu"
+
+
+def _parse_local_utc(value, tz_name=None) -> datetime:
+    """Parse a real-data timestamp (fire local wall time) into naive UTC.
+
+    ``tz_name`` is an IANA zone (e.g. ``America/Los_Angeles``); when given the
+    local time is shifted to UTC (handling DST). When ``None`` it is treated as
+    UTC already.
+    """
+    dt = _parse_utc(value)
+    if tz_name:
+        from zoneinfo import ZoneInfo
+
+        dt = (dt.replace(tzinfo=ZoneInfo(tz_name))
+                 .astimezone(timezone.utc).replace(tzinfo=None))
+    return dt
+
 
 class FireMatchError(ValueError):
     """Raised when a real-data fire cannot be matched unambiguously."""
@@ -182,21 +223,37 @@ def shift_window(a, src, dst, fill):
 
 @dataclass
 class Chain:
-    """A real-data cumulative-burned chain laid out in its start window."""
-    truths: np.ndarray       # (n, WIN, WIN) bool; cumulative burned up to each step
+    """A real-data chain laid out in its start window.
+
+    ``truths[0]`` is the *initial observed perimeter* (the small ignition fire)
+    at ``truth_times[0]`` (the start sample's ``t_input``); ``truths[k]`` for
+    ``k >= 1`` is the cumulative burned map at the ``k``-th label time. All
+    times are naive UTC.
+    """
+    truths: np.ndarray       # (n, WIN, WIN) bool; frame 0 = initial perimeter
     scored: np.ndarray       # (n, WIN, WIN) bool; cells the real data can score
-    truth_times: list        # (n,) naive UTC datetimes (t_label of each step)
+    truth_times: list        # (n,) naive UTC datetimes
     grid: dict               # lat0, lon0, row0, col0, cell for the start window
     start_perim: np.ndarray  # (WIN, WIN) bool; observed perimeter at the start step
 
 
-def load_chain(fire_id, samples_csv, samples_npz, start_step, steps) -> Chain:
-    """Build a cumulative-burned chain exactly as ROLLOUT.md ``load_chain``.
+def first_fire_step(samples_npz, threshold=_ARTIFACT_THRESHOLD) -> int:
+    """Index of the first sample holding real fire (observed perimeter count
+    above the pre-fire placeholder artifact); 0 if none."""
+    z = np.load(samples_npz)
+    counts = (z["X"][:, :, :, 0] > 0.5).sum(axis=(1, 2))
+    idx = np.flatnonzero(counts > threshold)
+    return int(idx[0]) if idx.size else 0
 
-    ``samples_csv`` may be ``samples.csv`` (or ``samples.parquet`` with the same
-    column names if a ``read_parquet`` source is swapped in). ``X[j, :, :, 0]``
-    is the observed perimeter at step ``j``; ``y[j]`` the burned label 12 h
-    later. Burned land stays burned.
+
+def load_chain(fire_id, samples_csv, samples_npz, start_step, steps,
+               tz_name=None) -> Chain:
+    """Build a cumulative-burned chain in the start window.
+
+    Follows ROLLOUT.md except that frame 0 is the *initial observed perimeter*
+    at the start sample's ``t_input``, then each label is accumulated. When
+    ``tz_name`` (IANA zone) is given, the real-data local timestamps are
+    converted to UTC; otherwise they are assumed already UTC.
     """
     z = np.load(samples_npz)
     X, y = z["X"], z["y"]
@@ -212,8 +269,11 @@ def load_chain(fire_id, samples_csv, samples_npz, start_step, steps) -> Chain:
 
     frame = origin[start_step]
     start_perim = X[start_step, :, :, 0] > 0.5
+    # frame 0 = the initial observed fire (the small ignition perimeter)
+    truths = [start_perim.copy()]
+    scored = [np.ones((_WIN, _WIN), dtype=bool)]
+    truth_times = [_parse_local_utc(rows.iloc[start_step]["t_input"], tz_name)]
     burned = start_perim.copy()
-    truths, scored, truth_times = [], [], []
     for k in range(L):
         j = start_step + k
         label = shift_window(y[j] > 0, origin[j], frame, False)
@@ -221,7 +281,7 @@ def load_chain(fire_id, samples_csv, samples_npz, start_step, steps) -> Chain:
         burned = burned | label
         truths.append(burned.copy())
         scored.append(inside | burned)
-        truth_times.append(_parse_utc(rows.iloc[j]["t_label"]))
+        truth_times.append(_parse_local_utc(rows.iloc[j]["t_label"], tz_name))
     grid = {
         "lat0": float(rows.iloc[start_step]["lat0"]),
         "lon0": float(rows.iloc[start_step]["lon0"]),

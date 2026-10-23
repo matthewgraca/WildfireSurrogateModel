@@ -42,20 +42,17 @@ def _load_json(path):
         return json.load(f)
 
 
-def _compute_window(rows, start, end, start_step, steps):
-    """Resolve the real-data chain window ``(start_step, steps)``.
+def _compute_steps(rows, start, end, start_step, steps, tz_name):
+    """Resolve the number of real-data label-steps to report.
 
-    Defaults: start at the first sample whose ``t_label`` is at/after the
-    simulation start; include every later sample whose ``t_label`` is at/before
-    the simulation end (at least one).
+    Defaults to every sample from ``start_step`` whose ``t_label`` (converted to
+    UTC) is at/before the simulation end, at least one.
     """
-    labels = [rs._parse_utc(v) for v in rows["t_label"]]
-    if start_step is None:
-        start_step = next((i for i, tl in enumerate(labels) if tl >= start), 0)
+    labels = [rs._parse_local_utc(v, tz_name) for v in rows["t_label"]]
     if steps is None:
         steps = sum(1 for tl in labels[start_step:] if tl <= end)
         steps = max(1, steps)
-    return int(start_step), int(steps)
+    return int(steps)
 
 
 def main(argv=None):
@@ -128,7 +125,7 @@ def main(argv=None):
     fire_id = row["fire_id"]
     print(f"real fire: {row['name']} ({fire_id}) {row['state']}/{row['county']}")
 
-    # real-data chain window
+    # real-data chain window (local timestamps -> UTC via the fire's timezone)
     import pandas as pd
 
     samples_csv = real_data / "samples.csv"
@@ -136,8 +133,14 @@ def main(argv=None):
     rows = pd.read_csv(samples_csv)
     rows = rows[rows["fire_id"].astype(str) == str(fire_id)]
     rows = rows.sort_values("step").reset_index(drop=True)
-    start_step, steps = _compute_window(rows, start, end, args.start_step, args.steps)
-    chain = rs.load_chain(fire_id, samples_csv, samples_npz, start_step, steps)
+    tz_name = rs._lon_to_tz(float(row["centroid_lon"]))
+    start_step = (args.start_step if args.start_step is not None
+                  else rs.first_fire_step(samples_npz))
+    steps = _compute_steps(rows, start, end, start_step, args.steps, tz_name)
+    chain = rs.load_chain(fire_id, samples_csv, samples_npz, start_step, steps,
+                          tz_name=tz_name)
+    print(f"  tz={tz_name}  chain: start_step={start_step} steps={steps} "
+          f"truths={len(chain.truth_times)}")
 
     # resample surrogate masks onto the chain grid, and the coverage mask
     pred_on_grid = [rs.sample_surrogate_on_grid(m, crop_affine, landscape_crs,
