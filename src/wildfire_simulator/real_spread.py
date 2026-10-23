@@ -421,6 +421,7 @@ def render_side_by_side_gif(pairs, grid, out_gif):
     from io import BytesIO
     from PIL import Image
     from matplotlib.colors import ListedColormap
+    from matplotlib.ticker import MaxNLocator
 
     lon0, lat0, cell = grid["lon0"], grid["lat0"], grid["cell"]
     extent = [lon0, lon0 + _WIN * cell, lat0, lat0 + _WIN * cell]
@@ -438,6 +439,8 @@ def render_side_by_side_gif(pairs, grid, out_gif):
         for ax in axes:
             ax.set_xlabel("lon")
             ax.set_ylabel("lat")
+            ax.xaxis.set_major_locator(MaxNLocator(2))
+            ax.yaxis.set_major_locator(MaxNLocator(2))
         fig.suptitle(f"{step_label}   IoU = {iv:.3f}")
         fig.tight_layout()
         buf = BytesIO()
@@ -474,6 +477,7 @@ def render_arrival_compare(real_arr, surr_arr, grid, out_png):
     import matplotlib.pyplot as plt
     from matplotlib.colors import Normalize
     from matplotlib.cm import ScalarMappable
+    from matplotlib.ticker import MaxNLocator
 
     lon0, lat0, cell = grid["lon0"], grid["lat0"], grid["cell"]
     extent = [lon0, lon0 + _WIN * cell, lat0, lat0 + _WIN * cell]
@@ -482,7 +486,7 @@ def render_arrival_compare(real_arr, surr_arr, grid, out_png):
     vmax = float(finite.max()) if finite.size else 1.0
     vmax = max(vmax, 1e-6)
     norm = Normalize(vmin=0.0, vmax=vmax)
-    cmap = plt.get_cmap("inferno")
+    cmap = plt.get_cmap("YlOrRd")
     mappable = ScalarMappable(norm=norm, cmap=cmap)
     mappable.set_array([])
 
@@ -494,6 +498,8 @@ def render_arrival_compare(real_arr, surr_arr, grid, out_png):
         ax.set_title(title)
         ax.set_xlabel("lon")
         ax.set_ylabel("lat")
+        ax.xaxis.set_major_locator(MaxNLocator(2))
+        ax.yaxis.set_major_locator(MaxNLocator(2))
     cbar = fig.colorbar(mappable, ax=axes, fraction=0.046, pad=0.04)
     cbar.set_label("fire arrival (hours since chain start)")
     fig.savefig(out_png, dpi=110, bbox_inches="tight")
@@ -582,16 +588,18 @@ def render_combined_fire_map(run_dir, grid, real_arr, surr_arr, ign_lonlat,
                    left=False, labelleft=False)
 
     divider = make_axes_locatable(ax)
-    cax_v = divider.append_axes("right", size="5%", pad=0.05)
-    cax_m = divider.append_axes("right", size="5%", pad=0.18)
+    cax_v = divider.append_axes("right", size="4%", pad=0.10)
+    cax_m = divider.append_axes("right", size="4%", pad=0.36)
     sm_v = ScalarMappable(norm=norm, cmap=cmap_v)
     sm_v.set_array([])
     sm_m = ScalarMappable(norm=norm, cmap=cmap_m)
     sm_m.set_array([])
     cb_v = fig.colorbar(sm_v, cax=cax_v)
-    cb_v.set_label("VIIRS arrival (h)", fontsize=8)
+    cb_v.set_label("VIIRS arrival (h)", fontsize=7)
+    cb_v.ax.tick_params(labelsize=6)
     cb_m = fig.colorbar(sm_m, cax=cax_m)
-    cb_m.set_label("Model arrival (h)", fontsize=8)
+    cb_m.set_label("Model arrival (h)", fontsize=7)
+    cb_m.ax.tick_params(labelsize=6)
 
     fig.savefig(out_png, dpi=130, bbox_inches="tight")
     plt.close(fig)
