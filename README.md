@@ -89,6 +89,13 @@ The model checkpoint stores only weights; per-channel min/max are computed from
 the training dataset by `scripts/compute_norm_stats.py` into an `.npz` that
 `infer_real.py` reads as `model.norm_stats`.
 
+`[simulation] start` is the **ignition** time. The model was trained on fire
+states already grown to `t=dt` (~16 cells, the smallest observed state), so the
+driver places the 16-cell seed **at** `start` and emits the first perimeter one
+`dt` later (perimeters follow every `dt`, last at `end`). The model window is
+shifted internally so the seed lands on `start`; `result.json` records the
+shifted window in `start`/`end` and keeps the ignition in `ignition_date`.
+
 ```bash
 # 1. generate per-channel norm stats from the training data the checkpoint used
 python scripts/compute_norm_stats.py \
@@ -134,6 +141,13 @@ first frame. It writes, into `<run_dir>/results/real_compare/` (or `--out`):
   reference perimeter outline, the VIIRS fire-arrival raster (viridis), the
   model fire-arrival raster (YlOrRd), and the ignition point (magenta star). The
   two arrival rasters share one time scale so they are directly comparable.
+- `timeline_gantt.png` — two-row timeline (surrogate model top, VIIRS data
+  bottom) with every frame's timestamp plotted as a labelled marker (`M{i}` /
+  `R{k}`) and a dashed connector from each VIIRS frame to the model frame it is
+  aligned to (labelled with the per-pair IoU) — the FAT alignment is readable at
+  a glance. A green square marks the surrogate's **ignition seed** on the model
+  row (and a dotted green line marks the ignition time); the model's forecast
+  window is shaded.
 
 Only the model's raw `rollout.npz` masks are used (never the cleaned
 largest-component perimeter) and only the real data's fire-spread channels. The

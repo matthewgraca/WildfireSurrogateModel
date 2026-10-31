@@ -851,6 +851,25 @@ def main(argv=None):
     end = end or _parse_or(fj.get("cont_date"))
     if end is None or start is None or end < start:
         die("need [simulation] start/end (UTC) or a fire with alarm/cont dates")
+
+    # [simulation] start is the *ignition* time. The model seeds a small grown
+    # disc at normalized t=dt and emits its first perimeter at t=2*dt, so the
+    # seed is hidden one dt into the window (that is why M0 used to land one dt
+    # late). Shift the model window one dt earlier while keeping the user's
+    # horizon: the seed then sits on the ignition and perimeters follow every
+    # dt afterwards.
+    dt = _eval_fraction(sim["dt"]) if isinstance(sim.get("dt"), str) \
+        else float(sim.get("dt", 0.125))
+    max_t = float(sim.get("max_t", 1.0))
+    if sim.get("start"):
+        ignition = start
+        span = end - start
+        dt_dur = (dt / max_t) * span
+        start = start - dt_dur
+        end = start + span
+    else:
+        ignition = None
+
     local_start = start + std_off
     local_end = end + std_off
 
@@ -891,9 +910,6 @@ def main(argv=None):
     # ---- step 6: rollout ----
     transform = MinMaxPerChannel(norm.min_val, norm.max_val)
     sample_norm = transform(torch.as_tensor(sample).unsqueeze(0).to(device))
-    dt = _eval_fraction(sim["dt"]) if isinstance(sim.get("dt"), str) \
-        else float(sim.get("dt", 0.125))
-    max_t = float(sim.get("max_t", 1.0))
     history, times = rollout(cfg, model, sample_norm, norm, wind_frames,
                              transform, start, end, dt, max_t, device, cy, cx)
     print(f"rollout: {len(history)} steps")
@@ -927,6 +943,7 @@ def main(argv=None):
     result = {
         "fire": fj.get("name"), "year": fj.get("year"),
         "start": _fmt_dt(start), "end": _fmt_dt(end),
+        "ignition_date": (_fmt_dt(ignition) if ignition is not None else None),
         "cell_m": cell_m, "crop_span_km": float(cell_m * _CROP / 1000.0),
         "iou": metric["iou"],
         "sim_area_acres": metric["sim_area_acres"],

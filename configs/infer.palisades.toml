@@ -66,8 +66,10 @@ output_speed_units = "mph"
 diurnal_winds = "true"
 
 [simulation]
-# UTC burn window (whole-hour, optional trailing Z). Omit both to use the
-# fire's alarm/containment dates (driver falls back to fire.json).
+# UTC ignition time (whole-hour, optional trailing Z). This is where the 16-cell
+# ignition seed is placed; the model's first perimeter is emitted one dt later
+# and perimeters follow every dt. Omit it (and `end`) to fall back to the fire's
+# FRAP alarm/containment dates from fire.json (not a precise ignition).
 start = "2025-01-07T17:00"
 end   = "2025-01-11T03:00"
 foliar_moisture = 80.0

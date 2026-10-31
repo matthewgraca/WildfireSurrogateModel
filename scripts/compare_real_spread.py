@@ -204,6 +204,14 @@ def main(argv=None):
         (float(fire["lon"]), float(fire["lat"])),
         out / "combined_fat_map.png",
         title=f"{row['name']} ({fire_id})")
+    ign_date = result.get("ignition_date")
+    ign_t = rs._parse_utc(ign_date) if ign_date else None
+    rs.render_timeline_gantt(
+        surr_times, [tt for tt, _, _, _, _ in pairs], aligned,
+        [iv for _, _, iv, _, _ in pairs], window=(start, end),
+        ignition=ign_t,
+        fire_label=f"{row['name']} ({fire_id})",
+        out_png=out / "timeline_gantt.png")
 
     print(f"  chain: start_step={start_step} steps={steps}")
     print(f"  aligned pairs: {n_aligned}   avg_step_iou="
@@ -216,6 +224,7 @@ def main(argv=None):
     print(f"  wrote {out / 'spread_compare.gif'}")
     print(f"  wrote {out / 'arrival_compare.png'}")
     print(f"  wrote {out / 'combined_fat_map.png'}")
+    print(f"  wrote {out / 'timeline_gantt.png'}")
     return 0
 
 

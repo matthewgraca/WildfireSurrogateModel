@@ -604,3 +604,89 @@ def render_combined_fire_map(run_dir, grid, real_arr, surr_arr, ign_lonlat,
     fig.savefig(out_png, dpi=130, bbox_inches="tight")
     plt.close(fig)
     return out_png
+
+
+def render_timeline_gantt(surr_times, truth_times, aligned, ious, window=None,
+                          ignition=None, fire_label="", out_png=None):
+    """Two-row timeline showing every frame's timestamp and the alignment.
+
+    Top row: the surrogate model's per-step extent times (``surr_times``);
+    bottom row: the real-data (VIIRS) per-step truth times (``truth_times``).
+    Each frame is a colored marker labelled with its index (``M{i}`` / ``R{k}``),
+    and a dashed connector runs from each real frame to the model frame it is
+    aligned to (``aligned``), so the pairing and any offset are visible at a
+    glance. ``window=(start, end)`` shades the model's forecast horizon and
+    ``ignition`` (when given) moves the shading's left edge to the ignition and
+    marks it. Returns the figure (for the caller to save) or writes ``out_png``.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from datetime import timedelta
+    from matplotlib.dates import DateFormatter, AutoDateLocator
+    from matplotlib.lines import Line2D
+
+    y_model, y_real = 1.0, 0.0
+    fig, ax = plt.subplots(figsize=(12, 4.6))
+    ax.axhline(0, color="0.7", lw=0.8)
+    ax.axhline(1, color="0.7", lw=0.8)
+    if window is not None:
+        w0 = window[0]
+        if ignition is not None and ignition > w0:
+            w0 = ignition
+        ax.axvspan(w0, window[1], color="tab:blue", alpha=0.08, zorder=0)
+    if ignition is not None:
+        ax.axvline(ignition, color="green", lw=1.0, ls=":", zorder=1)
+        ax.annotate("ignition", (ignition, y_model), textcoords="offset points",
+                    xytext=(0, 14), ha="center", fontsize=7, color="green")
+        # the model's 16-cell ignition seed sits here on the model row
+        ax.plot([ignition], [y_model], marker="s", markersize=8, color="#2ca02c",
+                zorder=3)
+        ax.annotate("seed", (ignition, y_model), textcoords="offset points",
+                    xytext=(0, -14), ha="center", fontsize=7, color="#2ca02c")
+
+    # model frames
+    for i, st in enumerate(surr_times):
+        ax.plot([st], [y_model], "o", color="#17becf", markersize=9, zorder=3)
+        ax.annotate(f"M{i}", (st, y_model), textcoords="offset points",
+                    xytext=(0, 9), ha="center", fontsize=7, color="#0d6e7f")
+    # real frames
+    for k, tt in enumerate(truth_times):
+        ax.plot([tt], [y_real], "o", color="#e4572e", markersize=9, zorder=3)
+        ax.annotate(f"R{k}", (tt, y_real), textcoords="offset points",
+                    xytext=(0, -14), ha="center", fontsize=7, color="#a83a1e")
+
+    # alignment connectors (real -> matched model)
+    for k, (tt, mi) in enumerate(zip(truth_times, aligned)):
+        if mi >= len(surr_times):
+            continue
+        ax.plot([tt, surr_times[mi]], [y_real, y_model], "--", color="0.45",
+                linewidth=1.1, alpha=0.8, zorder=2)
+        if ious[k] is not None:
+            mid = tt + (surr_times[mi] - tt) / 2
+            ax.annotate(f"{ious[k]:.3f}", (mid, 0.5), ha="center", fontsize=6,
+                        color="0.35", zorder=4)
+
+    ax.set_ylim(-0.75, 1.75)
+    ax.set_yticks([y_model, y_real])
+    ax.set_yticklabels(["Surrogate model", "VIIRS data"])
+    ax.set_xlabel("time (UTC)")
+    ax.xaxis.set_major_locator(AutoDateLocator())
+    ax.xaxis.set_major_formatter(DateFormatter("%m-%d %H:%M"))
+    fig.autofmt_xdate(rotation=0, ha="center")
+    ax.set_title(f"{fire_label}\nFAT alignment: surrogate model vs VIIRS "
+                 "(dashed = model frame a real frame is aligned to)", fontsize=10)
+    legend = [Line2D([0], [0], marker="o", color="w", markerfacecolor="#17becf",
+                     markersize=9, label="Surrogate model (extent time)"),
+              Line2D([0], [0], marker="s", color="w", markerfacecolor="#2ca02c",
+                     markersize=7, label="Surrogate ignition seed"),
+              Line2D([0], [0], marker="o", color="w", markerfacecolor="#e4572e",
+                     markersize=9, label="VIIRS (truth time)")]
+    ax.legend(handles=legend, loc="lower left", fontsize=8, frameon=False)
+    fig.tight_layout()
+
+    if out_png is not None:
+        fig.savefig(out_png, dpi=130, bbox_inches="tight")
+        plt.close(fig)
+        return out_png
+    return fig
