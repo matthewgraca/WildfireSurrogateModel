@@ -409,6 +409,47 @@ def iou(pred, truth, valid) -> float:
     return float(inter / union)
 
 
+def binary_metrics(pred, truth, valid) -> dict:
+    """IoU, Dice, precision and recall for two binary masks over ``valid``."""
+    pred_b = np.asarray(pred, dtype=bool)
+    truth_b = np.asarray(truth, dtype=bool)
+    v = np.asarray(valid, dtype=bool)
+    inter = np.logical_and(np.logical_and(pred_b, truth_b), v).sum()
+    union = np.logical_and(np.logical_or(pred_b, truth_b), v).sum()
+    p = np.logical_and(pred_b, v).sum()
+    t = np.logical_and(truth_b, v).sum()
+    iou = inter / union if union > _EPS else 0.0
+    dice = 2.0 * inter / (p + t) if (p + t) > _EPS else 0.0
+    precision = inter / p if p > _EPS else 0.0
+    recall = inter / t if t > _EPS else 0.0
+    return {"iou": float(iou), "dice": float(dice),
+            "precision": float(precision), "recall": float(recall)}
+
+
+def calfire_grid_mask(ref_geom, ref_crs, grid):
+    """Rasterize a CAL FIRE reference polygon onto the chain-window grid.
+
+    ``ref_geom`` is a shapely geometry in ``ref_crs`` (EPSG:5070). Returns a
+    ``(_WIN, _WIN) bool`` array on the window grid (row 0 = south), 1 where the
+    CAL FIRE reference covers a cell (``all_touched`` so edge cells count).
+    """
+    import rasterio
+    from rasterio.features import rasterize
+    from rasterio.transform import from_bounds
+    from pyproj import Transformer
+    from shapely.ops import transform as sh_transform
+
+    lon0, lat0, cell = grid["lon0"], grid["lat0"], grid["cell"]
+    w = _WIN * cell
+    trans = Transformer.from_crs(ref_crs, 4326, always_xy=True)
+    geom = sh_transform(trans.transform, ref_geom)
+    transform = from_bounds(lon0, lat0, lon0 + w, lat0 + w, _WIN, _WIN)
+    mask = rasterize([geom], out_shape=(_WIN, _WIN), transform=transform,
+                     fill=0, all_touched=True).astype(bool)
+    # from_bounds gives row 0 = north; flip so row 0 = south (chain convention)
+    return np.flipud(mask)
+
+
 def real_arrival_map(truths, truth_times, chain_start_time):
     """First-burn time per cell, in hours since ``chain_start_time``; NaN if never."""
     arr = np.full((_WIN, _WIN), np.nan, dtype=np.float32)

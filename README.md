@@ -142,6 +142,9 @@ afterward — so the real data's initial fire is shown rather than a large merge
 first frame. It writes, into `<run_dir>/results/real_compare/` (or `--out`):
 
 - `metrics.json` — per-step aligned IoU, average step IoU, final footprint IoU,
+  and a `calfire` block giving the model and the VIIRS cumulative burned
+  compared to the CAL FIRE reference on the chain window (IoU, Dice, precision,
+  recall), plus the model's official polygon IoU (`model_iou_polygon`).
 - `spread_compare.gif` — side-by-side real-vs-model spread per aligned step,
 - `arrival_compare.png` — side-by-side first-burn (arrival) time maps,
 - `combined_fat_map.png` — one map overlaying the basemap, the CALFIRE

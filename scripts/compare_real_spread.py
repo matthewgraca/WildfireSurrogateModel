@@ -167,8 +167,23 @@ def main(argv=None):
         valid_end = coverage & chain.scored[truth_end]
         final_iou = rs.iou(pred_on_grid[surr_end], chain.truths[truth_end],
                            valid_end)
+        # CAL FIRE reference rasterised onto the chain window: compare the
+        # model's final footprint and the VIIRS cumulative burned to it.
+        import geopandas as gpd
+
+        ref_gdf = gpd.read_file(run_dir / "reference_perimeter.shp")
+        ref_gdf = ref_gdf.to_crs("EPSG:5070")
+        ref_geom = ref_gdf.union_all().buffer(0)
+        calfire_grid = rs.calfire_grid_mask(ref_geom, "EPSG:5070", chain.grid)
+        calfire_model = rs.binary_metrics(pred_on_grid[surr_end], calfire_grid,
+                                          coverage)
+        calfire_viirs = rs.binary_metrics(
+            chain.truths[truth_end], calfire_grid,
+            np.ones(chain.truths[truth_end].shape, dtype=bool))
     else:
         final_iou = None
+        calfire_model = None
+        calfire_viirs = None
 
     # metrics
     steps_meta = [{
@@ -185,6 +200,11 @@ def main(argv=None):
         "cell_m": cell_m, "crop_span_km": float(crop_span_km),
         "chain_start_step": int(start_step), "n_aligned": n_aligned,
         "avg_step_iou": avg_step_iou, "final_iou": final_iou,
+        "calfire": {
+            "model": (dict(calfire_model) if calfire_model else None),
+            "viirs": (dict(calfire_viirs) if calfire_viirs else None),
+            "model_iou_polygon": result.get("iou"),
+        },
         "steps": steps_meta,
     }
     out.mkdir(parents=True, exist_ok=True)
