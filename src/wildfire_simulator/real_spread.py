@@ -371,6 +371,33 @@ def surrogate_crop_coverage(crop_affine, landscape_crs, grid):
     return _surrogate_px(crop_affine, landscape_crs, grid)[2]
 
 
+def resample_perimeter_to_crop(perim, grid, crop_affine, landscape_crs,
+                               crop_size=_CROP):
+    """Place a real-data perimeter (on ``grid``) onto the 500x500 model crop.
+
+    ``perim`` is a ``(135, 135) bool`` array (row 0 = south) on the real-data
+    window described by ``grid`` (``lat0``/``lon0``/``cell``). Each crop pixel
+    centre is mapped to lon/lat and then to the window cell, nearest-neighbour,
+    so the seed land exactly on the crop's georeference.
+    """
+    from pyproj import Transformer
+
+    rr, cc = np.meshgrid(np.arange(crop_size, dtype=float),
+                         np.arange(crop_size, dtype=float), indexing="ij")
+    cx = ((cc + 0.5) * crop_affine.a + (rr + 0.5) * crop_affine.b + crop_affine.c)
+    cy = ((cc + 0.5) * crop_affine.d + (rr + 0.5) * crop_affine.e + crop_affine.f)
+    trans = Transformer.from_crs(landscape_crs, 4326, always_xy=True)
+    lon, lat = trans.transform(cx, cy)
+    cell = grid["cell"]
+    ri = np.rint((lat - grid["lat0"]) / cell - 0.5).astype(int)
+    ci = np.rint((lon - grid["lon0"]) / cell - 0.5).astype(int)
+    H, W = perim.shape
+    inside = (ri >= 0) & (ri < H) & (ci >= 0) & (ci < W)
+    out = np.zeros((crop_size, crop_size), dtype=bool)
+    out[inside] = perim[ri[inside], ci[inside]]
+    return out
+
+
 def iou(pred, truth, valid) -> float:
     """Cell-wise IoU restricted to ``valid`` (0.0 when the union is empty)."""
     pred_b = np.asarray(pred, dtype=bool)

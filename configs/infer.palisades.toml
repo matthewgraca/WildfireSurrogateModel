@@ -76,6 +76,13 @@ foliar_moisture = 80.0
 # Match the training schedule (config.yaml used dt = 1/8, max_t = 1.0).
 dt = "1/8"
 max_t = 1.0
+# Initialized forecast: seed the model with the real data's first observed
+# perimeter instead of the 16-cell disc, on the product's 12 h cadence. When
+# enabled, `start`/`end` above are overridden: the window auto-sizes to 12 h
+# steps anchored at the real-data's first observation (R0). Requires
+# `real_data_root`. To enable, set `seed_from_real = true`.
+seed_from_real = true
+real_data_root = "/mnt/wildfire/real-data/v5_wildfires_2026-10-08"
 
 [paths]
 tools_python = "/home/mgraca/miniconda3/envs/wildfire_env_20261012/bin/python"

@@ -96,6 +96,13 @@ driver places the 16-cell seed **at** `start` and emits the first perimeter one
 shifted internally so the seed lands on `start`; `result.json` records the
 shifted window in `start`/`end` and keeps the ignition in `ignition_date`.
 
+Optionally set `[simulation] seed_from_real = true` (+ `real_data_root`) for an
+**initialized forecast**: instead of the synthetic 16-cell disc, the model is
+seeded with the real data's **first observed perimeter** (resampled onto the
+crop), and the window auto-sizes so each `dt` step is **12 h** (matching the
+product), anchored at the real data's first observation (`R0`). `start`/`end`
+are overridden in this mode; `result.json` `ignition_date` = `R0`.
+
 ```bash
 # 1. generate per-channel norm stats from the training data the checkpoint used
 python scripts/compute_norm_stats.py \

@@ -840,6 +840,7 @@ def main(argv=None):
     ig_r, ig_c = rowcol(land_transform, ig_x, ig_y)
     cy, cx = int(ig_r), int(ig_c)
     _preflight_crop(cy, cx, (H, W))
+    crop_affine = land_transform * rasterio.Affine.translation(cx - _HALF, cy - _HALF)
 
     # ---- step 4: wind ----
     lat, lon = float(fj["lat"]), float(fj["lon"])
@@ -861,7 +862,50 @@ def main(argv=None):
     dt = _eval_fraction(sim["dt"]) if isinstance(sim.get("dt"), str) \
         else float(sim.get("dt", 0.125))
     max_t = float(sim.get("max_t", 1.0))
-    if sim.get("start"):
+    seed_from_real = bool(sim.get("seed_from_real", False))
+    seed_mask = None
+    if seed_from_real:
+        # Initialized forecast: seed the model with the real data's first
+        # observed perimeter, on the product's 12 h cadence.
+        real_data_root = sim.get("real_data_root")
+        if not real_data_root:
+            die("seed_from_real requires [simulation] real_data_root")
+        from wildfire_simulator import real_spread as rs
+        import pandas as pd
+
+        fire_row = rs.load_fire(Path(real_data_root) / "fires.csv",
+                                name=fire["name"], year=fire["year"],
+                                run_inc=fj.get("inc_num"))
+        fire_id = fire_row["fire_id"]
+        samples_csv = Path(real_data_root) / "samples.csv"
+        samples_npz = Path(real_data_root) / "samples" / f"{fire_id}.npz"
+        rs_rows = pd.read_csv(samples_csv)
+        rs_rows = rs_rows[rs_rows["fire_id"].astype(str) == str(fire_id)]
+        rs_rows = rs_rows.sort_values("step").reset_index(drop=True)
+        tz_name = rs._lon_to_tz(float(fire_row["centroid_lon"]))
+        z = np.load(samples_npz)
+        counts = (z["X"][:, :, :, 0] > 0.5).sum(axis=(1, 2))
+        start_step = int(np.flatnonzero(counts > 20)[0]) if (counts > 20).any() else 0
+        r0 = rs._parse_local_utc(rs_rows.iloc[start_step]["t_input"], tz_name)
+        perim = (z["X"][start_step, :, :, 0] > 0.5)
+        real_grid = {
+            "lat0": float(rs_rows.iloc[start_step]["lat0"]),
+            "lon0": float(rs_rows.iloc[start_step]["lon0"]),
+            "cell": rs._CELL_DEG,
+        }
+        seed_mask = rs.resample_perimeter_to_crop(perim, real_grid, crop_affine,
+                                                  land_crs)
+        if not seed_mask.any():
+            die("real first-frame perimeter is empty inside the model crop; "
+                "cannot seed_from_real")
+        ignition = r0
+        # 12 h cadence: each normalized dt step = 12 h -> span = 12h * max_t/dt.
+        dt_dur = 12.0 * 3600.0
+        start = r0 - timedelta(seconds=dt_dur)
+        end = start + timedelta(seconds=dt_dur * (max_t / dt))
+        print(f"seed_from_real: {fire_id} step {start_step} R0={r0} "
+              f"seed_px={int(seed_mask.sum())} window={start} -> {end}")
+    elif sim.get("start"):
         ignition = start
         span = end - start
         dt_dur = (dt / max_t) * span
@@ -896,6 +940,10 @@ def main(argv=None):
         max_val_fat=float(norm.max_val[1]),
         seed_radius=int(cfg["model"].get("ignition_seed_radius", 10)),
     )
+    if seed_from_real and seed_mask is not None:
+        sample[0] = seed_mask.astype(np.float32)
+        sample[1] = np.where(seed_mask, dt * float(norm.max_val[1]), 0.0)\
+            .astype(np.float32)
     real_fire.save_input_channels(sample, results_dir)
 
     # ---- model ----
