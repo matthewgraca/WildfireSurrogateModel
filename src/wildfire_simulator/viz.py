@@ -37,8 +37,12 @@ def select_viz_indices(n_samples, n=10, seed=42):
     return sorted(torch.randperm(n_samples, generator=gen)[:n].tolist())
 
 
-def _render_to_array(fig, dpi):
-    """Rasterize an open figure to a uint8 RGB (H, W, 3) array, then close it."""
+def render_to_array(fig, dpi):
+    """Rasterize an open figure to a uint8 RGB (H, W, 3) array, then close it.
+
+    Public because ``finetune.viz`` reuses it to log real-data figures to
+    TensorBoard (``SummaryWriter.add_image`` needs the HWC uint8 form).
+    """
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
     plt.close(fig)
@@ -138,7 +142,7 @@ def render_input_channels(sample, sample_idx, dpi=150):
     fig.suptitle(f"Sample {sample_idx} — Static Input Channels", fontsize=13)
     fig.tight_layout()
 
-    return _render_to_array(fig, dpi)
+    return render_to_array(fig, dpi)
 
 
 def render_mask_rollout(pred_history, gt_history, sample_idx, dpi=150):
@@ -184,7 +188,7 @@ def render_mask_rollout(pred_history, gt_history, sample_idx, dpi=150):
     fig.suptitle(f"Sample {sample_idx} — Fire Mask Rollout", fontsize=12)
     fig.tight_layout()
 
-    return _render_to_array(fig, dpi)
+    return render_to_array(fig, dpi)
 
 
 def render_final_arrival_map(pred_history, gt_history, sample_idx, dpi=150):
@@ -228,7 +232,7 @@ def render_final_arrival_map(pred_history, gt_history, sample_idx, dpi=150):
     fig.suptitle(f"Sample {sample_idx} — Final Arrival Time Map", fontsize=12)
     fig.tight_layout()
 
-    return _render_to_array(fig, dpi)
+    return render_to_array(fig, dpi)
 
 
 def render_fat_montage(pred_fats, gt_fats, sample_ids, title="", dpi=50):
@@ -281,4 +285,4 @@ def render_fat_montage(pred_fats, gt_fats, sample_ids, title="", dpi=50):
         fig.suptitle(title, fontsize=12)
     fig.tight_layout()
 
-    return _render_to_array(fig, dpi)
+    return render_to_array(fig, dpi)

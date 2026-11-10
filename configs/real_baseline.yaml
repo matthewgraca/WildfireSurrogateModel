@@ -1,0 +1,81 @@
+# Wildfire Simulator - real-data baseline (MK-UNet trained on the v5 wildfire
+# chains, no MTT data). Run with:
+#
+#    python scripts/train_real.py --config configs/real_baseline.yaml \
+#      --output-dir /mnt/wildfire/surrogate-model/real-baseline
+#    python scripts/eval_real.py --run-dir /mnt/wildfire/surrogate-model/real-baseline \
+#      --real-data /mnt/wildfire/real-data/v5_wildfires_2026-10-08
+#
+# Every path here can be overridden on the command line.
+
+# Real-data root (fires.csv, samples.csv, samples/, channels.json, split).
+real_data: /mnt/wildfire/real-data/v5_wildfires_2026-10-08
+
+# Channels fed to the model, in model-input order (names from channels.json).
+# null = every channel except `fbfm_mode`, the one channel the product has no
+# normalization statistics for (and a nominal FBFM40 code, which z-scoring would
+# misrepresent). List channel names explicitly to add it back — with statistics.
+# The model additionally receives one step-time channel, so
+# in_channels = len(data_channels) + 1.
+data_channels: null
+
+# Per-channel z-score stats ({name: {mean, std, log}}).
+# null = <real_data>/norm_cache/04c547cd280a3e4d.json
+norm_stats: null
+
+# Optional decompressed mirror of samples/ (scripts/prepare_real_cache.py).
+# The product's npz members are DEFLATE-compressed, so every fire costs a full
+# inflate per epoch; with a mirror that cost disappears. null = use the npz.
+# Example: /mnt/wildfire/real-data/v5_wildfires_2026-10-08-uncompressed
+data_cache: null
+
+# Frozen split keys. `split_key` picks the training fires; validation always
+# uses `val` (the evaluation script defaults to the same).
+split_key: train
+val_split_key: val
+
+# Chain length in 12-hour steps (12 = six days, the product the dataset was
+# built for). Validation chains during training are capped to the same length;
+# the evaluation script always rolls each fire to its end.
+chain_len: 12
+val_chain_len: 12
+# Extra chains per fire: its first real fire sample and a growing step, each
+# with 50% probability per epoch (ROLLOUT.md's recipe).
+extra_chains: true
+
+batch_size: 8
+num_workers: 8
+# bf16 autocast for the forward pass (fp32 master weights, fp32 loss). ~1.35x
+# faster per step on this model; set false if a run must be bit-comparable to
+# an fp32 one.
+amp: true
+lr: 5.0e-4
+weight_decay: 1.0e-4
+epochs: 120
+early_stopping: false
+loss: dice            # dice | bce
+
+# Scheduled sampling: step k is given the model's own forecast for the previous
+# step with probability 1/(1 + exp(-k*(epoch - t0))) -- teacher-forced early
+# (~0 at epoch 0), half and half at epoch t0, fully self-driven late.
+# Same curve and convention as the MTT trainer (ScheduledSampler).
+scheduled_sampling:
+  k: 0.1
+  t0: 40
+
+model_channels: [16, 32, 64, 96, 160]
+# Per-worker byte budget for decoded per-fire samples (GB).
+cache_gb: 0.6
+seed: 42
+
+# TensorBoard observability (logs to <output-dir>/training/{train,val}):
+#   Loss train/val, IOU train/val per epoch, and every `viz_every` epochs the
+#   tracked validation fires (fixed subset, `viz_fires` of them):
+#   viz/val/fat_montage (predicted vs real final arrival maps, one shared scale)
+#   and viz/fire/<id>/direct (yellow = both, blue = predicted only, red = real
+#   only, gray = fire at the forecast start) + IOU/fire/<id>.
+#   These chains are the training-time validation chains (val_chain_len steps);
+#   the full-life per-fire figures come from scripts/eval_real.py.
+#   0 disables the tracked figures (scalars keep logging).
+viz_every: 5
+viz_fires: 6
