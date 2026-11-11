@@ -120,10 +120,32 @@ class RealChainTrainer:
 
     # -- checkpointing -----------------------------------------------------
     def load_checkpoint(self, checkpoint_path):
+        """Restore epoch, weights, optimizer and callback state.
+
+        Callback state (``ModelCheckpoint``'s best metric, ``EarlyStopping``'s
+        patience) rides in the checkpoint, so resuming continues the run the
+        file came from rather than starting a fresh grace period. Returns a
+        summary dict for logging.
+        """
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
         self.current_epoch = checkpoint['epoch'] + 1
         self.model.load_state_dict(checkpoint['model'])
-        self.optimizer.load_state_dict(checkpoint['optimizer'])
+        if checkpoint.get('optimizer') is not None:
+            self.optimizer.load_state_dict(checkpoint['optimizer'])
+        states = checkpoint.get('callbacks') or {}
+        restored = []
+        for cb in self.callbacks:
+            state = states.get(type(cb).__name__)
+            if state is not None and hasattr(cb, 'load_state_dict'):
+                cb.load_state_dict(state)
+                restored.append(type(cb).__name__)
+        return {
+            'path': str(checkpoint_path),
+            'epoch': checkpoint['epoch'],
+            'continues_at': self.current_epoch,
+            'callbacks': states,
+            'restored': restored,
+        }
 
     # -- rollout -----------------------------------------------------------
     def _run(self, loader, epoch, desc, train, record_positions=None):
@@ -311,6 +333,14 @@ class RealChainTrainer:
         return (total / max(total_n, 1), total_iou / max(total_n, 1), records)
 
     def fit(self):
+        """Run epochs ``current_epoch .. epochs - 1``, calling the callbacks
+        after each validation pass.
+
+        Returns the last epoch's metrics, or ``{}`` when there was nothing to
+        run (``current_epoch >= epochs``) — the caller that set those bounds
+        (a resume) is responsible for saying so loudly.
+        """
+        metrics = {}
         for epoch in range(self.current_epoch, self.epochs):
             started = time.perf_counter()
             loader = (self.train_loader_factory(epoch)

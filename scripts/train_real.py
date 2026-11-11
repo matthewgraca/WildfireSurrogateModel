@@ -77,6 +77,7 @@ def load_real_config(path):
     cfg.setdefault("weight_decay", 1e-4)
     cfg.setdefault("epochs", 120)
     cfg.setdefault("early_stopping", False)
+    cfg.setdefault("patience", 20)
     cfg.setdefault("loss", "dice")
     cfg.setdefault("scheduled_sampling", {"k": 0.1, "t0": 40})
     cfg.setdefault("model_channels", [16, 32, 64, 96, 160])
@@ -94,6 +95,50 @@ def build_loss(name):
     if name == "bce":
         return torch.nn.BCELoss()
     raise ValueError(f"unknown loss {name!r} (expected 'dice' or 'bce')")
+
+
+def resolve_resume(value, out_dir):
+    """Checkpoint path to continue from.
+
+    ``value`` is an explicit path, or ``"auto"`` for the lowest-``val_loss``
+    checkpoint in ``<out_dir>/checkpoints`` (files are only written when the
+    monitored metric improves, so the best one is also the most recent).
+    """
+    if value is None:
+        return None
+    if value != "auto":
+        path = Path(value)
+        if not path.is_file():
+            raise SystemExit(f"--resume {value}: no such checkpoint")
+        return path
+    ckpt_dir = Path(out_dir) / "checkpoints"
+    files = sorted(ckpt_dir.glob("best-model-*.pt"))
+
+    def val_loss(p):
+        try:
+            return float(p.stem.split("-")[-1])
+        except ValueError:
+            return float("inf")
+
+    if not files:
+        raise SystemExit(f"--resume auto: no best-model-*.pt in {ckpt_dir}")
+    return min(files, key=val_loss)
+
+
+def check_resume_epochs(checkpoint_path, epochs):
+    """Refuse a resume that has nothing to run, before workers/writers exist.
+
+    ``--epochs`` is the run's total target, so it has to be beyond the resumed
+    epoch; catching it here means a typo does not spawn dataloader workers or
+    leave an empty TensorBoard event file in the run directory.
+    """
+    done = torch.load(checkpoint_path, map_location="cpu").get("epoch")
+    if done is not None and done + 1 >= epochs:
+        raise SystemExit(
+            f"--resume {Path(checkpoint_path).name} is at epoch {done} and "
+            f"--epochs {epochs} is not beyond it: --epochs is the total target, "
+            f"not the number of extra epochs"
+        )
 
 
 def main(argv=None):
@@ -116,6 +161,15 @@ def main(argv=None):
     p.add_argument("--viz-every", type=int,
                    help="log tracked-sample figures every N epochs (0 = off)")
     p.add_argument("--viz-fires", type=int, help="how many fires to track")
+    p.add_argument("--resume", nargs="?", const="auto", default=None,
+                   help="continue a previous run: a checkpoint path, or omit "
+                        "the value for 'auto' (the lowest-val_loss checkpoint "
+                        "in <output-dir>/checkpoints). Uses the same "
+                        "--output-dir so TensorBoard keeps one series")
+    p.add_argument("--early-stopping", action=argparse.BooleanOptionalAction,
+                   default=None, help="stop when val_loss stalls (default: config)")
+    p.add_argument("--patience", type=int, default=None,
+                   help="stalled epochs tolerated by --early-stopping")
     p.add_argument("--amp", action=argparse.BooleanOptionalAction, default=None,
                    help="bf16 autocast forward (default: from the config)")
     p.add_argument("--limit-fires", type=int, default=None,
@@ -132,7 +186,7 @@ def main(argv=None):
         cfg["data_channels"] = [c.strip() for c in args.data_channels.split(",")
                                 if c.strip()]
     for key in ("epochs", "batch_size", "lr", "num_workers", "chain_len", "seed",
-                "viz_every", "viz_fires", "amp"):
+                "viz_every", "viz_fires", "amp", "early_stopping", "patience"):
         value = getattr(args, key)
         if value is not None:
             cfg[key] = value
@@ -147,6 +201,14 @@ def main(argv=None):
     device = torch.device(args.device or
                           ("cuda" if torch.cuda.is_available() else "cpu"))
     torch.manual_seed(cfg["seed"])
+
+    # Resolve --resume now and refuse an impossible target before anything is
+    # built; the weights/optimizer/callback state are loaded once the trainer
+    # exists (below).
+    resume_path = resolve_resume(args.resume, out_dir)
+    if resume_path is not None:
+        check_resume_epochs(resume_path, cfg["epochs"])
+        print(f"resume: {resume_path}")
 
     store = RealDataStore(
         cfg["real_data"], channels=cfg["data_channels"],
@@ -199,13 +261,20 @@ def main(argv=None):
     sampler = ScheduledSampler(k=cfg["scheduled_sampling"]["k"],
                                t0=cfg["scheduled_sampling"]["t0"])
 
-    callbacks = [ModelCheckpoint(
+    callbacks = []
+    # EarlyStopping first: ModelCheckpoint reads its state_dict() when it writes
+    # a file, so listing it before makes the saved patience current for the
+    # epoch that is being saved.
+    early_stop_cb = None
+    if cfg["early_stopping"]:
+        early_stop_cb = EarlyStopping(monitor="val_loss", mode="min",
+                                      patience=int(cfg["patience"]))
+        callbacks.append(early_stop_cb)
+    callbacks.append(ModelCheckpoint(
         monitor="val_loss", mode="min",
         filepath=str(out_dir / "checkpoints/best-model-{epoch:02d}-{val_loss:.4f}.pt"),
-    )]
-    if cfg["early_stopping"]:
-        callbacks.append(EarlyStopping(monitor="val_loss", mode="min",
-                                       patience=20))
+        state_providers=[early_stop_cb] if early_stop_cb else (),
+    ))
     callbacks.append(RealTensorBoardCallback(
         train_writer=SummaryWriter(str(out_dir / "training/train")),
         val_writer=SummaryWriter(str(out_dir / "training/val")),
@@ -245,6 +314,14 @@ def main(argv=None):
         # one full training chain = the arrival montage's 1.0
         fat_norm_hours=cfg["chain_len"] * 12.0,
     )
+    if resume_path is not None:
+        info = trainer.load_checkpoint(resume_path)
+        print(f"  epoch {info['epoch']} completed; continuing at "
+              f"{info['continues_at']} (target {cfg['epochs']})")
+        if info['callbacks']:
+            print(f"  callback state: {info['callbacks']}")
+        print(f"  tensorboard continues in {out_dir}/training (same run dir)")
+
     metrics = trainer.fit()
     print(f"finished: epoch={metrics.get('epoch')} "
           f"train_loss={metrics.get('train_loss'):.4f} "

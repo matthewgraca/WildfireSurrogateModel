@@ -51,8 +51,16 @@ num_workers: 8
 amp: true
 lr: 5.0e-4
 weight_decay: 1.0e-4
-epochs: 120
+epochs: 120            # total target, not "epochs to run from now"
+# Stop early when val_loss stops improving, and how many stalled epochs to
+# tolerate. --resume restores this callback's patience and best value from the
+# checkpoint, so continuing a run does not hand it a fresh grace period:
+#   python scripts/train_real.py --output-dir <same run dir> --resume \
+#     --epochs 200 --early-stopping --patience 20
+# `--resume` with no value picks the lowest-val_loss checkpoint in
+# <output-dir>/checkpoints and keeps TensorBoard on the same series.
 early_stopping: false
+patience: 20
 loss: dice            # dice | bce
 
 # Scheduled sampling: step k is given the model's own forecast for the previous

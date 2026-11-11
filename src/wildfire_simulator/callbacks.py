@@ -4,11 +4,26 @@ import os
 from wildfire_simulator import viz
 
 class ModelCheckpoint:
-    def __init__(self, monitor, mode, filepath):
+    """Save the model whenever the monitored metric improves.
+
+    A checkpoint also carries the ``state_dict()`` of every callback in
+    ``state_providers`` plus its own, so a resumed run continues from the exact
+    state it left: ``RealChainTrainer.load_checkpoint`` restores the weights,
+    the optimizer, the epoch counter and those callbacks (EarlyStopping's
+    patience and best value, for one).
+
+    Providers are read when the file is written, so list them **before** this
+    callback in the trainer's callback list; otherwise their state lags one
+    epoch. Giving one provider twice, or two providers of the same class,
+    collides on the class-name key.
+    """
+
+    def __init__(self, monitor, mode, filepath, state_providers=()):
         self.monitor = monitor
         self.mode = mode
         self.filepath_template = filepath
         self.best_metric = None
+        self.state_providers = list(state_providers)
 
         if self.mode == 'min':
             self.compare = lambda current, best: current < best
@@ -16,6 +31,15 @@ class ModelCheckpoint:
             self.compare = lambda current, best: current > best
         else:
             raise ValueError(f"Unsupported mode: {self.mode}")
+
+    def state_dict(self):
+        """The monitor's best value, so a resume does not re-save a worse one."""
+        return {'best_metric': self.best_metric}
+
+    def load_state_dict(self, state):
+        if state and state.get('best_metric') is not None:
+            self.best_metric = state['best_metric']
+        return self
 
     def on_validation_end(self, epoch, metrics, model, optimizer):
         current = metrics.get(self.monitor)
@@ -25,10 +49,16 @@ class ModelCheckpoint:
             self.best_metric = current
             path = self.filepath_template.format(epoch=epoch, val_loss=current)
             os.makedirs(os.path.dirname(path), exist_ok=True)
+            callbacks = {}
+            for cb in self.state_providers:
+                if hasattr(cb, 'state_dict'):
+                    callbacks[type(cb).__name__] = cb.state_dict()
+            callbacks[type(self).__name__] = self.state_dict()
             checkpoint = {
                 'epoch': epoch,
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
+                'callbacks': callbacks,
             }
             torch.save(checkpoint, path)
 
@@ -55,6 +85,22 @@ class EarlyStopping:
             self.compare = lambda current, best: current > best
         else:
             raise ValueError(f"Unsupported mode: {self.mode}")
+
+    def state_dict(self):
+        """Patience/best so a resumed run does not get a fresh grace period."""
+        return {
+            'best_metric': self.best_metric,
+            'epochs_since_improvement': self.epochs_since_improvement,
+        }
+
+    def load_state_dict(self, state):
+        if not state:
+            return self
+        if state.get('best_metric') is not None:
+            self.best_metric = state['best_metric']
+        if state.get('epochs_since_improvement') is not None:
+            self.epochs_since_improvement = int(state['epochs_since_improvement'])
+        return self
 
     def on_validation_end(self, epoch, metrics, model, optimizer):
         """Return True when ``patience`` stalled epochs have elapsed."""
