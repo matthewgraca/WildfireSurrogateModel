@@ -8,13 +8,20 @@ add one without touching the evaluation script:
         return float(...)
 
 ``DEFAULT_METRICS`` is what the evaluation script reports unless ``--metrics``
-names others (``--metrics all`` runs every registered one). Two metrics are the
-required headline numbers:
+names others (``--metrics all`` runs every registered one). The defaults are the
+two headline IoUs plus the size-normalised pair that makes them interpretable:
 
 * ``final_iou`` — the final model footprint against the fire's final burned
   footprint (every perimeter unioned to the last timestep);
 * ``avg_step_iou`` — mean per-step IoU over the rollout, i.e. how well the model
-  predicts step-by-step spread rather than just the end state.
+  predicts step-by-step spread rather than just the end state;
+* ``precision_final`` — of the cells the model called burned at the end, the
+  fraction that really burned. This is the one that falls when the predicted
+  union runs away, which ``final_iou`` alone hides (it degenerates into a ratio
+  of true to predicted area once the prediction engulfs the fire);
+* ``recall_final`` — of the cells that really burned, the fraction the model
+  found. Stays high under that same saturation, so the pair separates
+  "over-prediction" from "missed spread".
 """
 
 from __future__ import annotations
@@ -25,8 +32,9 @@ import numpy as np
 
 from wildfire_simulator import real_spread as rs
 
-# Metrics reported by default (the two the study asks for).
-DEFAULT_METRICS = ("final_iou", "avg_step_iou")
+# Metrics reported by default: the two headline IoUs plus the precision/recall
+# pair that says *why* an IoU is low (over-prediction vs missed spread).
+DEFAULT_METRICS = ("final_iou", "avg_step_iou", "precision_final", "recall_final")
 
 _REGISTRY = {}
 

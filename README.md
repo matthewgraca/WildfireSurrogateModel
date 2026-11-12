@@ -438,18 +438,37 @@ training is one deterministic 12-step chain per val fire, reported as `val_loss`
 ### Metrics (modular)
 
 Each fire is rolled forward from its first observed perimeter to the end
-of its recorded life, then scored per fire:
+of its recorded life, then scored per fire. Four metrics are reported by
+default:
 
 - **`final_iou`** — the final model footprint against the fire's final burned
   footprint (every perimeter unioned to the last timestep),
-- **`avg_step_iou`** — mean per-step IoU over the whole rollout.
+- **`avg_step_iou`** — mean per-step IoU over the whole rollout,
+- **`precision_final`** — of the cells the model calls burned at the end, the
+  fraction that really burned,
+- **`recall_final`** — of the cells that really burned, the fraction the model
+  found.
 
-Both are averaged over the validation set and written to
-`<out>/metrics.json` (+ `<out>/per_fire.csv`). Other registered metrics slot in
+The precision/recall pair is there because `final_iou` alone is ambiguous: once
+the predicted union engulfs the fire, IoU degenerates into a ratio of true to
+predicted area, so a long rollout looks "worse" purely because its truth is
+small. Reported together, the pair separates over-prediction (precision
+collapses, recall stays high) from missed spread (the reverse).
+
+All four are averaged over the validation set and written to
+`<out>/metrics.json` (+ `<out>/per_fire.csv`). Evaluation is **deterministic**:
+`eval_real.py` disables cuDNN autotuning and enables deterministic kernels,
+because a timing-based convolution-algorithm choice otherwise flips cells whose
+probability sits at the 0.5 mask threshold — measured at 43 of 109 val fires, up
+to ±153 cells and 0.014 IoU per fire, while the set-wide mean moved only 4e-4.
+With the pin, two invocations of the same checkpoint reproduce `per_fire.csv`
+exactly. Training keeps autotuning on (it is a speed win) and does not claim
+bit-reproducibility.
+
+Other registered metrics slot in
 with `--metrics name,name` (or `--metrics all`): `median_step_iou`,
-`dice_final`, `precision_final`, `recall_final`, `growth_ratio`,
-`persistence_final_iou`, `arrival_mae_hours`. Add one without touching the
-script:
+`dice_final`, `growth_ratio`, `persistence_final_iou`, `arrival_mae_hours`. Add
+one without touching the script:
 
 ```python
 from finetune import metrics as rm
@@ -481,11 +500,34 @@ channel — no basemap or API call), for a seeded sample of fires
 <out>/
   metrics.json            # config, per-fire metrics, summary, per_fire_extra, figures
   per_fire.csv            # one row per scored fire
+  duration_metrics.png    # from plot_duration_metrics.py (below)
   fires/<name>_<fire_id>/
     final_arrival_comparison.png
     wind_coherence.png
     direct_comparison.png
 ```
+
+### Aggregate analysis: metric vs fire length
+
+`scripts/plot_duration_metrics.py` turns an evaluation directory into one figure
+and a printed table: each metric's **median over quantile bins of fire length**,
+with the inter-quartile range as the bar. It deliberately draws no per-fire
+scatter — 100+ points overplot into noise, and the bins carry both the trend and
+the spread.
+
+```bash
+python scripts/plot_duration_metrics.py --run-dir <run dir>       # uses run/real_eval
+python scripts/plot_duration_metrics.py --eval-dir <run>/real_eval --bins 8
+```
+
+Default series are `avg_step_iou`, `precision_final`, `recall_final`; `--metrics`
+takes any columns `per_fire.csv` has (so re-run `eval_real.py --metrics all`
+first if you want others). `final_iou` is available but not plotted by default:
+once the predicted union engulfs a fire it degenerates into a ratio of true to
+predicted area, which the precision/recall pair explains directly. On the
+109-fire v5 validation set the shape is: step IoU declining gently, precision
+peaking at mid durations and collapsing on the longest fires (~0.13 beyond 100
+steps) while recall climbs to 1.00 — the model progressively filling the window.
 
 Useful flags: `--split-key val|train|test|all` (default `val`), `--max-fires N`,
 `--metrics-only`, `--vis-only`, `--limit-fires N` (training smoke test),

@@ -1,5 +1,7 @@
 """Tests for the real-data baseline figures (finetune.viz)."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 import torch
@@ -156,3 +158,50 @@ def test_figures_encode_the_requested_color_coding(rollout, tmp_path):
 
     px = _pixels(wind)
     assert (px < 60).all(axis=1).sum() > 500     # quiver arrows
+
+
+# ---------------------------------------------------------------------------
+# aggregate analysis: metric vs fire length
+# ---------------------------------------------------------------------------
+def test_duration_bin_summary_bins_medians_and_spearman():
+    n_steps = np.array([10, 10, 20, 20, 30, 30, 40, 40], dtype=float)
+    series = {"m": np.array([1.0, 3.0, 2.0, 4.0, 5.0, 7.0, 6.0, 8.0])}
+    s = rv.duration_bin_summary(series, n_steps, bins=2)
+
+    assert [b["n"] for b in s["bins"]] == [4, 4]
+    assert s["bins"][0]["lo"] == 10.0 and s["bins"][1]["hi"] == 40.0
+    # first half {1,2,3,4}: median 2.5, quartiles 1.75 / 3.25
+    assert s["bins"][0]["m"]["median"] == pytest.approx(2.5)
+    assert s["bins"][0]["m"]["q1"] == pytest.approx(1.75)
+    assert s["bins"][0]["m"]["q3"] == pytest.approx(3.25)
+    # second half {5,6,7,8}
+    assert s["bins"][1]["m"]["median"] == pytest.approx(6.5)
+    # monotone-ish series (ties in both variables) -> strong positive rank correlation
+    rho, p = s["spearman"]["m"]
+    assert rho > 0.8 and p < 0.05
+
+
+def test_duration_bin_summary_single_bin_and_empty():
+    s = rv.duration_bin_summary({"m": np.array([1.0, 2.0])},
+                                np.array([5.0, 9.0]), bins=1)
+    assert len(s["bins"]) == 1 and s["bins"][0]["n"] == 2
+    with pytest.raises(ValueError, match="at least one fire"):
+        rv.duration_bin_summary({"m": np.array([])}, np.array([]))
+
+
+def test_duration_metrics_figure_has_one_series_per_metric(tmp_path):
+    rng = np.random.default_rng(0)
+    n_steps = np.linspace(11, 174, 60)
+    series = {name: rng.uniform(0, 1, n_steps.size)
+              for name in ("avg_step_iou", "precision_final", "recall_final")}
+    s = rv.duration_bin_summary(series, n_steps, bins=4)
+    path = rv.render_duration_metrics(s, tmp_path / "d.png", title="t")
+    assert Path(path).is_file() and Path(path).stat().st_size > 5000
+
+    fig = rv.duration_metrics_figure(s, title="t")
+    ax = fig.axes[0]
+    labels = [t.get_text() for t in ax.get_legend().get_texts()]
+    assert len(labels) == 3
+    assert all("ρ" in text for text in labels)
+    # no per-fire scatter: only the binned medians are drawn as data
+    assert ax.get_xscale() == "log"

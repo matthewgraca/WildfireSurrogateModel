@@ -252,3 +252,110 @@ def render_direct_comparison_array(pred, truth, scored, perim0, title,
 
     fig = _direct_figure(classify_masks(pred, truth, scored, perim0), title)
     return render_to_array(fig, dpi)
+
+
+# ---------------------------------------------------------------------------
+# aggregate analysis: metric vs fire length
+# ---------------------------------------------------------------------------
+_DURATION_LABELS = {
+    "avg_step_iou": ("mean per-step IoU", "C0"),
+    "precision_final": ("precision (final footprint)", "C2"),
+    "recall_final": ("recall (final footprint)", "C3"),
+    "final_iou": ("final footprint IoU", "C1"),
+    "median_step_iou": ("median per-step IoU", "C4"),
+    "dice_final": ("Dice (final footprint)", "C5"),
+    "growth_ratio": ("predicted / real growth", "C6"),
+}
+
+
+def duration_bin_summary(series, n_steps, bins=6) -> dict:
+    """Summarize metrics over quantile bins of fire length.
+
+    Quantile bins (not fixed-width) keep every bin populated despite the heavy
+    right tail of fire durations. Returns the bin geometry, each series'
+    median and inter-quartile range per bin, and the Spearman rank correlation
+    of each series against the raw (unbinned) fire length — so a caller can
+    print the table without touching matplotlib.
+
+    Args:
+        series: ``{name: values}`` with one value per fire.
+        n_steps: fire length per fire (the x axis).
+        bins: number of quantile bins.
+
+    Returns:
+        ``{"bins": [{"lo","hi","center","n", <name>: {"median","q1","q3"}}],
+        "series": [names], "spearman": {name: (rho, p)}}``.
+    """
+    from scipy import stats
+
+    x = np.asarray(n_steps, dtype=float)
+    if x.size == 0:
+        raise ValueError("duration_bin_summary needs at least one fire")
+    edges = np.unique(np.quantile(x, np.linspace(0.0, 1.0, bins + 1)))
+    rows = []
+    for i, (lo, hi) in enumerate(zip(edges[:-1], edges[1:])):
+        last = i == len(edges) - 2
+        mask = (x >= lo) & (x <= hi if last else x < hi)
+        if not mask.any():
+            continue
+        row = {"lo": float(lo), "hi": float(hi),
+               "center": float(np.median(x[mask])), "n": int(mask.sum())}
+        for name, values in series.items():
+            v = np.asarray(values, dtype=float)[mask]
+            row[name] = {"median": float(np.median(v)),
+                         "q1": float(np.percentile(v, 25)),
+                         "q3": float(np.percentile(v, 75))}
+        rows.append(row)
+    spearman = {}
+    for name, values in series.items():
+        rho, p = stats.spearmanr(x, np.asarray(values, dtype=float))
+        spearman[name] = (float(rho), float(p))
+    return {"bins": rows, "series": list(series), "spearman": spearman}
+
+
+def duration_metrics_figure(summary, title=""):
+    """Median-with-IQR lines of each metric against fire length (no scatter).
+
+    One line per series: the median of a quantile bin, with the inter-quartile
+    range as the vertical bar. Fire-length points are too dense to overplot
+    readably (109+ fires), so the bins carry the trend and the spread.
+    """
+    from matplotlib.ticker import FixedFormatter, FixedLocator, NullFormatter
+
+    bins = summary["bins"]
+    if not bins:
+        raise ValueError("duration_metrics_figure needs a non-empty summary")
+    fig, ax = plt.subplots(figsize=(9.2, 5.0), dpi=130)
+    for i, name in enumerate(summary["series"]):
+        label, color = _DURATION_LABELS.get(name, (name, f"C{i % 10}"))
+        xs = [row["center"] for row in bins]
+        med = np.array([row[name]["median"] for row in bins])
+        lo = np.array([row[name]["q1"] for row in bins])
+        hi = np.array([row[name]["q3"] for row in bins])
+        rho, p = summary["spearman"][name]
+        ax.errorbar(xs, med, yerr=[med - lo, hi - med], color=color, lw=2.0,
+                    capsize=3, marker="o", ms=5, markeredgecolor="white",
+                    markeredgewidth=0.7, zorder=5,
+                    label=f"{label}    ρ = {rho:+.2f}  (p {p:.0e})")
+    ax.set_xscale("log")
+    ax.xaxis.set_major_locator(FixedLocator([12, 24, 48, 96, 192]))
+    ax.xaxis.set_major_formatter(FixedFormatter(["12", "24", "48", "96", "192"]))
+    ax.xaxis.set_minor_formatter(NullFormatter())
+    ax.set_xlim(min(row["lo"] for row in bins) * 0.9,
+                max(row["hi"] for row in bins) * 1.1)
+    ax.set_ylim(-0.02, 1.02)
+    ax.set_xlabel("fire length (12-hour steps; 2 steps = 1 day)")
+    ax.set_ylabel("metric value")
+    ax.grid(alpha=0.25)
+    ax.legend(loc="lower left", fontsize=8.5, framealpha=0.9)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    if title:
+        ax.set_title(title, fontsize=10.5)
+    fig.tight_layout()
+    return fig
+
+
+def render_duration_metrics(summary, out_png, title=""):
+    """Write the metric-vs-duration figure; returns the path."""
+    return _save(duration_metrics_figure(summary, title), out_png)

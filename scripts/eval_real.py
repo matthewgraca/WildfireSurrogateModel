@@ -6,15 +6,22 @@ forward autoregressively from its first real observed perimeter to the end of
 its recorded life (``finetune.infer.rollout_fire``), and the metrics and figures
 are computed from that rollout.
 
-Metrics (modular: see ``finetune.metrics``, add one with ``register_metric``)
+Metrics (modular: see ``finetune.metrics``, add one with ``register_metric``).
+Reported by default:
 
-  * ``final_iou``     - the final model footprint vs the fire's final burned
-                        footprint (every perimeter unioned to the last step),
-  * ``avg_step_iou``  - mean per-step IoU, i.e. step-by-step spread quality.
+  * ``final_iou``       - the final model footprint vs the fire's final burned
+                          footprint (every perimeter unioned to the last step),
+  * ``avg_step_iou``    - mean per-step IoU, i.e. step-by-step spread quality,
+  * ``precision_final`` - of the cells called burned at the end, the fraction
+                          that really burned (drops when the predicted union
+                          runs away),
+  * ``recall_final``    - of the cells that really burned, the fraction found
+                          (stays high under that same saturation).
 
-Both are reported per fire and averaged over the whole validation set. Other
-registered metrics (dice/precision/recall, arrival MAE, persistence baseline,
-...) are opt-in with ``--metrics name,name`` or ``--metrics all``.
+All four are recorded per fire and averaged over the validation set; the
+precision/recall pair is what makes a low ``final_iou`` interpretable. Other
+registered metrics (dice, arrival MAE, persistence baseline, ...) are opt-in
+with ``--metrics name,name`` or ``--metrics all``.
 
 Figures, one directory per fire (terrain from the real data, no basemap API)
 
@@ -38,6 +45,7 @@ Figures, one directory per fire (terrain from the real data, no basemap API)
 import argparse
 import csv
 import json
+import os
 import random
 import sys
 from pathlib import Path
@@ -121,6 +129,28 @@ def _print_summary(summary, names):
               f"{s['std']:>10.4f}{s['min']:>10.4f}{s['max']:>10.4f}{s['n']:>6}")
 
 
+def make_deterministic(device):
+    """Pin evaluation to bit-reproducible kernels.
+
+    Reported metrics are measurements: two invocations of the same checkpoint on
+    the same data must agree exactly. They do not by default. cuDNN's
+    ``benchmark`` autotuning picks a convolution algorithm by timing, and that
+    choice varies between processes; with output probabilities sitting within
+    float noise of the 0.5 mask threshold, a few cells flip, and a single fire's
+    IoU moves by ~1 pp (measured: 43 of 109 val fires, up to ±153 cells,
+    per-fire IoU up to 0.014 — while the set-wide mean moves only 4e-4).
+
+    Training deliberately keeps ``benchmark`` on: it is a speed win there, and
+    training runs are not claimed to be bit-reproducible anyway.
+    """
+    if device.type != "cuda":
+        return
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    torch.use_deterministic_algorithms(True)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="real-data baseline evaluation")
     p.add_argument("--run-dir", help="trained run directory (checkpoints + config)")
@@ -155,9 +185,7 @@ def main(argv=None):
 
     device = torch.device(args.device or
                           ("cuda" if torch.cuda.is_available() else "cpu"))
-    if device.type == "cuda":
-        # fixed 135x135 windows padded to 160x160: let cuDNN pick per shape
-        torch.backends.cudnn.benchmark = True
+    make_deterministic(device)
     checkpoint = _resolve_checkpoint(args, cfg)
     out_dir = Path(args.output_dir) if args.output_dir else (
         (Path(args.run_dir) if args.run_dir else Path.cwd()) / "real_eval")

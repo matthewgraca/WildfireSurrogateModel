@@ -48,17 +48,22 @@ def _rollout(pred_steps, truth_steps, scored, **kw):
 # ---------------------------------------------------------------------------
 # registry
 # ---------------------------------------------------------------------------
-def test_default_metrics_are_per_fire_iou_values():
+def test_default_metrics_are_iou_plus_precision_and_recall():
     mask = np.array([[1, 1], [0, 0]], bool)
     other = np.array([[1, 1], [1, 0]], bool)
     rollout = _rollout([mask, mask], [mask, other],
                        [np.ones((2, 2), bool)] * 2, perim0=mask)
     out = rm.compute_metrics(rollout)
-    assert set(out) == {"final_iou", "avg_step_iou", "n_steps"}
+    assert set(out) == {"final_iou", "avg_step_iou", "precision_final",
+                        "recall_final", "n_steps"}
     # step 0: identical -> 1.0 ; step 1: inter 2, union 3 -> 2/3
     assert out["avg_step_iou"] == pytest.approx((1.0 + 2 / 3) / 2)
     # "every perimeter unioned to the final timestep" = the last step's truth
     assert out["final_iou"] == pytest.approx(2 / 3)
+    # at the last step: 2 predicted cells, both right -> precision 1.0;
+    # 3 real cells, 2 found -> recall 2/3
+    assert out["precision_final"] == pytest.approx(1.0)
+    assert out["recall_final"] == pytest.approx(2 / 3)
     assert out["n_steps"] == 2.0
 
 
