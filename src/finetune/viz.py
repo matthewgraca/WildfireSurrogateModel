@@ -204,7 +204,7 @@ def _direct_figure(classes, title, on_terrain=None):
     fig, ax = plt.subplots(figsize=(8.5, 7.5))
     if on_terrain is not None:
         _draw_terrain(ax, on_terrain)
-    ax.imshow(classes, cmap=cmap, norm=norm, origin="lower", alpha=0.85,
+    ax.imshow(classes, cmap=cmap, norm=norm, origin="lower", alpha=1.0,
               interpolation="nearest",
               extent=[0, classes.shape[1], 0, classes.shape[0]])
     tp = int((classes == 2).sum())
